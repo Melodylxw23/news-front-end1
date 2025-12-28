@@ -37,10 +37,16 @@ export default function NewsFetchDashboard() {
       const res = await apiFetch('/api/newsarticles/recent')
       const a = extractArticlesFromResponse(res)
       if (a && a.length > 0) {
-        const normalized = a.map(normalizeArticle)
+        let normalized = a.map(normalizeArticle)
+        // filter out articles with blank/whitespace-only titles
+        normalized = normalized.filter(x => x && x.title && String(x.title).trim().length > 0)
         console.debug('loadRecentArticles - normalized recent articles:', normalized)
-        setArticles(normalized)
-        try { localStorage.setItem('recentArticles', JSON.stringify(normalized)) } catch (e) {}
+        // merge server-provided recent articles into current list, placing server items at top
+        setArticles(prev => {
+          const merged = mergeNewOnTop(normalized, prev)
+          try { localStorage.setItem('recentArticles', JSON.stringify(merged)) } catch (e) {}
+          return merged
+        })
         return
       }
     } catch (e) {
@@ -89,10 +95,14 @@ export default function NewsFetchDashboard() {
       setLastFetchRaw(res)
       const a = extractArticlesFromResponse(res)
       if (a && a.length > 0) {
-        const normalized = a.map(normalizeArticle)
+        let normalized = a.map(normalizeArticle)
+        normalized = normalized.filter(x => x && x.title && String(x.title).trim().length > 0)
         console.debug('triggerFetch - normalized fetched articles:', normalized)
-        setArticles(normalized)
-        try { localStorage.setItem('recentArticles', JSON.stringify(normalized)) } catch (e) {}
+        setArticles(prev => {
+          const merged = mergeNewOnTop(normalized, prev)
+          try { localStorage.setItem('recentArticles', JSON.stringify(merged)) } catch (e) {}
+          return merged
+        })
         // attempt to reload persisted articles from server (if backend saved them)
         if (persist) await loadRecentArticles()
         showToast({ title: 'Fetch finished', description: `Fetched ${a.length} articles`, status: 'success' })
@@ -120,6 +130,33 @@ export default function NewsFetchDashboard() {
     // keep original raw article so we can inspect other shapes if url is missing
     raw: a
   })
+
+  // Merge helper: put newArticles at top, dedupe by id or sourceURL+title+publishedAt
+  const mergeNewOnTop = (newArticles, existingArticles) => {
+    const out = []
+    const seen = new Set()
+    const pushIfNew = (it) => {
+      if (!it) return
+      // Prefer database primary key `newsArticleId` when available (from normalized id or raw object)
+      const raw = it.raw || {}
+      const rawId = raw.NewsArticleId ?? raw.newsArticleId ?? raw.NewsArticleID ?? raw.newsArticleID ?? null
+      const idKey = it.id ?? (rawId != null ? String(rawId) : null)
+      const urlKey = (it.url && String(it.url).toLowerCase()) || null
+      const titleKey = it.title ? String(it.title).trim().toLowerCase() : null
+      const pubKey = it.fetchedAt ? String(it.fetchedAt) : null
+      const key = idKey ?? (urlKey ? `${urlKey}` : (titleKey && pubKey ? `${titleKey}|${pubKey}` : null))
+      if (key) {
+        if (seen.has(key)) return
+        seen.add(key)
+        out.push(it)
+      } else {
+        out.push(it)
+      }
+    }
+    for (const n of (Array.isArray(newArticles) ? newArticles : [])) pushIfNew(n)
+    for (const e of (Array.isArray(existingArticles) ? existingArticles : [])) pushIfNew(e)
+    return out
+  }
 
   // Try to find any URL string inside an object/array (depth-limited, avoids circulars)
   // This will search for URLs that appear anywhere inside strings (including HTML/escaped forms).
@@ -225,10 +262,14 @@ export default function NewsFetchDashboard() {
       setLastFetchRaw(res)
       const a = extractArticlesFromResponse(res)
       if (a && a.length > 0) {
-        const normalized = a.map(normalizeArticle)
+        let normalized = a.map(normalizeArticle)
+        normalized = normalized.filter(x => x && x.title && String(x.title).trim().length > 0)
         console.debug('fetchForSource - normalized fetched articles:', normalized)
-        setArticles(normalized)
-        try { localStorage.setItem('recentArticles', JSON.stringify(normalized)) } catch (e) {}
+        setArticles(prev => {
+          const merged = mergeNewOnTop(normalized, prev)
+          try { localStorage.setItem('recentArticles', JSON.stringify(merged)) } catch (e) {}
+          return merged
+        })
         if (persist) await loadRecentArticles()
         showToast({ title: 'Fetch finished', description: `Fetched ${a.length} articles`, status: 'success' })
       } else {
