@@ -8,6 +8,20 @@ export default ({ mode }) => {
 
   return defineConfig({
     plugins: [react()],
+    // Pre-bundle and ensure ESM exports for some dependencies (fixes missing named exports)
+    optimizeDeps: {
+      include: ['@chakra-ui/react', '@emotion/react', '@emotion/styled', 'framer-motion']
+    },
+    ssr: {
+      // Do not externalize Chakra so its ESM build is used during SSR/optimization
+      noExternal: ['@chakra-ui/react', '@emotion/react', '@emotion/styled']
+    },
+    // Ensure CommonJS modules with mixed ESM/CJS are transformed
+    build: {
+      commonjsOptions: {
+        transformMixedEsModules: true
+      }
+    },
     server: {
       port: 3000,
       proxy: {

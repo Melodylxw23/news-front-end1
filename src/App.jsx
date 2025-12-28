@@ -21,6 +21,8 @@ import StaffLogin from './assets/pages/StaffLogin';
 import Register from './assets/pages/Register';
 import StaffRegister from './assets/pages/StaffRegister';
 import LoginLanding from './assets/pages/LoginLanding';
+import SourceManagement from './assets/pages/SourceManagement';
+import NewsFetchDashboard from './assets/pages/NewsFetchDashboard';
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -58,6 +60,10 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/client-profile', label: 'Profile', icon: '👤' },
       { path: '/family-member', label: 'Family Members', icon: '👪' },
       { path: '/claims-management', label: 'Claims', icon: '💼' }
+    ],
+    admin: [
+      { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
+      { path: '/admin/sources', label: 'Source Management', icon: '🗂️' }
     ],
     advisor: [
       { path: '/dashboard', label: 'Dashboard', icon: '🏠' },
@@ -244,6 +250,8 @@ function AppContent() {
           <Route path={'/StaffLogin'} element={<StaffLogin onLoginSuccess={handleLoginSuccessAndNavigate} />} />
           <Route path={'/StaffRegister'} element={<StaffRegister />} />
           <Route path={'/landing'} element={<LoginLanding />} />
+          <Route path={'/admin/sources'} element={<SourceManagement />} />
+          <Route path={'/admin/fetch'} element={<NewsFetchDashboard />} />
         </Routes>
       </Box>
     </Flex>

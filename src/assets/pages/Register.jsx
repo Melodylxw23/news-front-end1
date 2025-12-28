@@ -71,7 +71,7 @@ function Register() {
           <input name="ContactPerson" value={form.ContactPerson} onChange={handleChange} required />
 
           <label>Email</label>
-          <input type="email" name="Email" value={form.Email} onChange={handleChange} required />
+          <input type="email" name="Email" value={form.Email} onChange={handleChange} required autoComplete="email" />
 
           <label>WeChat / Work ID</label>
           <input name="WeChatWorkId" value={form.WeChatWorkId} onChange={handleChange} />
@@ -89,10 +89,10 @@ function Register() {
           <input name="MembershipType" value={form.MembershipType} onChange={handleChange} />
 
           <label>Password</label>
-          <input type="password" name="Password" value={form.Password} onChange={handleChange} required />
+          <input type="password" name="Password" value={form.Password} onChange={handleChange} required autoComplete="new-password" />
 
           <label>Confirm Password</label>
-          <input type="password" name="ConfirmPassword" value={form.ConfirmPassword} onChange={handleChange} required />
+          <input type="password" name="ConfirmPassword" value={form.ConfirmPassword} onChange={handleChange} required autoComplete="new-password" />
 
           <button className="auth-btn" type="submit" disabled={loading}>{loading ? 'Registering...' : 'Register'}</button>
         </form>

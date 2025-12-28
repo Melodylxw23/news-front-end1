@@ -15,7 +15,8 @@ function StaffLogin({ onLoginSuccess }) {
     setMessage(null)
     setLoading(true)
     try {
-      const res = await fetch('/api/UserControllers/login', {
+      const API_BASE = import.meta.env.VITE_API_BASE || ''
+      const res = await fetch(`${API_BASE}/api/UserControllers/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form)
@@ -38,7 +39,7 @@ function StaffLogin({ onLoginSuccess }) {
         } else {
           // fallback to /me
           try {
-            const meRes = await fetch('/api/UserControllers/me', { headers: { Authorization: `Bearer ${token}` } })
+            const meRes = await fetch(`${API_BASE}/api/UserControllers/me`, { headers: { Authorization: `Bearer ${token}` } })
             const me = await meRes.json().catch(() => null)
             const roles = me?.Roles || []
             const rolesLower = roles.map(r => String(r).toLowerCase())
@@ -73,13 +74,13 @@ function StaffLogin({ onLoginSuccess }) {
       {message && <div style={{ marginBottom: 12 }}>{message}</div>}
       <form onSubmit={handleSubmit}>
         <label>Email</label>
-        <input type="email" name="Email" value={form.Email} onChange={handleChange} required />
+        <input type="email" name="Email" value={form.Email} onChange={handleChange} required autoComplete="email" />
 
         <label>Password</label>
-        <input type="password" name="Password" value={form.Password} onChange={handleChange} required />
+        <input type="password" name="Password" value={form.Password} onChange={handleChange} required autoComplete="current-password" />
 
         <label>Secret Code</label>
-        <input name="SecretCode" value={form.SecretCode} onChange={handleChange} />
+        <input name="SecretCode" value={form.SecretCode} onChange={handleChange} autoComplete="one-time-code" />
 
         <button className="auth-btn" type="submit" disabled={loading}>{loading ? 'Signing in...' : 'Login'}</button>
       </form>

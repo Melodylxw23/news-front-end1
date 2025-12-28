@@ -47,16 +47,16 @@ function StaffRegister() {
         <input name="Name" value={form.Name} onChange={handleChange} required />
 
         <label>Email</label>
-        <input type="email" name="Email" value={form.Email} onChange={handleChange} required />
+        <input type="email" name="Email" value={form.Email} onChange={handleChange} required autoComplete="email" />
 
         <label>WeChat / Work ID</label>
         <input name="WeChatWorkId" value={form.WeChatWorkId} onChange={handleChange} />
 
         <label>Password</label>
-        <input type="password" name="Password" value={form.Password} onChange={handleChange} required />
+        <input type="password" name="Password" value={form.Password} onChange={handleChange} required autoComplete="new-password" />
 
         <label>Confirm Password</label>
-        <input type="password" name="ConfirmPassword" value={form.ConfirmPassword} onChange={handleChange} required />
+        <input type="password" name="ConfirmPassword" value={form.ConfirmPassword} onChange={handleChange} required autoComplete="new-password" />
 
         <label>Secret Code</label>
         <input name="SecretCode" value={form.SecretCode} onChange={handleChange} required />

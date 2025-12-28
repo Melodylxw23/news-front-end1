@@ -73,10 +73,10 @@ function MemberLogin({ onLoginSuccess }) {
       {message && <div style={{ marginBottom: 12 }}>{message}</div>}
       <form onSubmit={handleSubmit}>
         <label>Email</label>
-        <input type="email" name="Email" value={form.Email} onChange={handleChange} required />
+        <input type="email" name="Email" value={form.Email} onChange={handleChange} required autoComplete="email" />
 
         <label>Password</label>
-        <input type="password" name="Password" value={form.Password} onChange={handleChange} required />
+        <input type="password" name="Password" value={form.Password} onChange={handleChange} required autoComplete="current-password" />
 
         <button className="auth-btn" type="submit" disabled={loading}>{loading ? 'Signing in...' : 'Login'}</button>
       </form>
