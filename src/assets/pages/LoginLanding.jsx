@@ -10,6 +10,7 @@ export default function LoginLanding() {
   const [role, setRole] = React.useState(() => localStorage.getItem('role'))
   const [name, setName] = React.useState(() => localStorage.getItem('name') || '')
   const [loading, setLoading] = React.useState(false)
+  const [memberProfile, setMemberProfile] = React.useState(null)
   const navigate = useNavigate()
 
   React.useEffect(() => {
@@ -48,6 +49,12 @@ export default function LoginLanding() {
       if (data?.Name) {
         setName(data.Name)
         localStorage.setItem('name', data.Name)
+      }
+      
+      // If member, fetch their profile with interests
+      if (data?.Member || data?.member) {
+        const memberData = data.Member || data.member
+        setMemberProfile(memberData)
       }
     }).catch(() => setLoading(false))
   }, [])
@@ -117,7 +124,7 @@ export default function LoginLanding() {
                 )}
 
                 {role === 'member' && (
-                  <Box mt={3} p={3} bg="gray.50" borderRadius="8px">
+                  <Box mt={3} p={3} bg="gray.50" borderRadius="8px" w="100%">
                     <Text fontWeight={700}>Member access</Text>
                     <Text fontSize="sm" color="gray.600" mt={2}>As a member you can:</Text>
                     <ul style={{ marginTop: 8, marginLeft: 18 }}>
@@ -125,6 +132,179 @@ export default function LoginLanding() {
                       <li>Manage your subscription and preferences</li>
                     </ul>
                     <Text fontSize="sm" color="gray.600" mt={2}>Use the sidebar to access member features.</Text>
+                    
+                    {/* Display member preferences */}
+                    {memberProfile && (
+                      <Box mt={4} pt={3} borderTop="1px solid" borderColor="gray.200">
+                        <Text fontWeight={600} fontSize="sm" color="gray.700" mb={3}>Your Preferences</Text>
+                        
+                        {/* Language and Topics Section */}
+                        <Box mb={3} p={3} bg="gray.50" borderRadius="8px">
+                          <HStack justifyContent="space-between" alignItems="center" mb={2}>
+                            <Text fontSize="xs" fontWeight={600} color="gray.500">LANGUAGE & TOPICS</Text>
+                            <Button
+                              size="xs"
+                              colorScheme="red"
+                              variant="outline"
+                              onClick={() => navigate('/select-topics')}
+                            >
+                              ✏️ Edit
+                            </Button>
+                          </HStack>
+                        
+                          {(memberProfile.PreferredLanguage || memberProfile.preferredLanguage) && (
+                            <Box mb={2}>
+                              <HStack spacing={2}>
+                                <Box as="span" fontSize="16px">🌐</Box>
+                                <Text fontSize="sm" color="gray.700">
+                                  {memberProfile.PreferredLanguage || memberProfile.preferredLanguage}
+                                </Text>
+                              </HStack>
+                            </Box>
+                          )}
+                          
+                          <Box>
+                            {((memberProfile.Interests && memberProfile.Interests.length > 0) || 
+                              (memberProfile.interests && memberProfile.interests.length > 0)) ? (
+                              <Box display="flex" flexWrap="wrap" gap={2}>
+                                {(memberProfile.Interests || memberProfile.interests || []).map((interest, idx) => (
+                                  <Box
+                                    key={idx}
+                                    px={3}
+                                    py={1}
+                                    bg="red.50"
+                                    color="red.700"
+                                    borderRadius="full"
+                                    fontSize="xs"
+                                    fontWeight={500}
+                                    border="1px solid"
+                                    borderColor="red.200"
+                                  >
+                                    {interest.Name || interest.name}
+                                  </Box>
+                                ))}
+                              </Box>
+                            ) : (
+                              <HStack spacing={2}>
+                                <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                                  No topics selected yet
+                                </Text>
+                                <Button
+                                  size="xs"
+                                  colorScheme="red"
+                                  variant="outline"
+                                  onClick={() => navigate('/select-topics')}
+                                >
+                                  Select Topics
+                                </Button>
+                              </HStack>
+                            )}
+                          </Box>
+                        </Box>
+
+                        {/* Notification Preferences Section */}
+                        <Box mb={3} p={3} bg="gray.50" borderRadius="8px">
+                          <HStack justifyContent="space-between" alignItems="center" mb={2}>
+                            <Text fontSize="xs" fontWeight={600} color="gray.500">NOTIFICATION PREFERENCES</Text>
+                            <Button
+                              size="xs"
+                              colorScheme="blue"
+                              variant="outline"
+                              onClick={() => navigate('/notification-preferences')}
+                            >
+                              ✏️ Edit
+                            </Button>
+                          </HStack>
+                          
+                          {memberProfile.NotificationChannels || memberProfile.notificationChannels ? (
+                            <Box display="flex" flexWrap="wrap" gap={2}>
+                              {(memberProfile.NotificationChannels || memberProfile.notificationChannels || '').split(',').map((channel, idx) => (
+                                <Box
+                                  key={idx}
+                                  px={3}
+                                  py={1}
+                                  bg="blue.50"
+                                  color="blue.700"
+                                  borderRadius="full"
+                                  fontSize="xs"
+                                  fontWeight={500}
+                                  border="1px solid"
+                                  borderColor="blue.200"
+                                >
+                                  {channel.trim() === 'whatsapp' && '💬 WhatsApp'}
+                                  {channel.trim() === 'email' && '📧 Email'}
+                                  {channel.trim() === 'sms' && '📱 SMS'}
+                                  {channel.trim() === 'inApp' && '🔔 In-App'}
+                                </Box>
+                              ))}
+                            </Box>
+                          ) : (
+                            <HStack spacing={2}>
+                              <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                                No notification preferences set
+                              </Text>
+                              <Button
+                                size="xs"
+                                colorScheme="blue"
+                                variant="outline"
+                                onClick={() => navigate('/notification-preferences')}
+                              >
+                                Set Preferences
+                              </Button>
+                            </HStack>
+                          )}
+                        </Box>
+
+                        {/* Notification Frequency Section */}
+                        <Box mb={3} p={3} bg="gray.50" borderRadius="8px">
+                          <HStack justifyContent="space-between" alignItems="center" mb={2}>
+                            <Text fontSize="xs" fontWeight={600} color="gray.500">NOTIFICATION FREQUENCY</Text>
+                            <Button
+                              size="xs"
+                              colorScheme="purple"
+                              variant="outline"
+                              onClick={() => navigate('/notification-frequency')}
+                            >
+                              ✏️ Edit
+                            </Button>
+                          </HStack>
+                          
+                          {memberProfile.NotificationFrequency || memberProfile.notificationFrequency ? (
+                            <Box display="flex" flexWrap="wrap" gap={2}>
+                              <Box
+                                px={3}
+                                py={1}
+                                bg="purple.50"
+                                color="purple.700"
+                                borderRadius="full"
+                                fontSize="xs"
+                                fontWeight={500}
+                                border="1px solid"
+                                borderColor="purple.200"
+                              >
+                                {((memberProfile.NotificationFrequency || memberProfile.notificationFrequency) === 'immediate' && '⚡ Immediate') ||
+                                 ((memberProfile.NotificationFrequency || memberProfile.notificationFrequency) === 'daily' && '📅 Daily Digest') ||
+                                 ((memberProfile.NotificationFrequency || memberProfile.notificationFrequency) === 'weekly' && '📊 Weekly Digest')}
+                              </Box>
+                            </Box>
+                          ) : (
+                            <HStack spacing={2}>
+                              <Text fontSize="sm" color="gray.500" fontStyle="italic">
+                                No frequency set
+                              </Text>
+                              <Button
+                                size="xs"
+                                colorScheme="purple"
+                                variant="outline"
+                                onClick={() => navigate('/notification-frequency')}
+                              >
+                                Set Frequency
+                              </Button>
+                            </HStack>
+                          )}
+                        </Box>
+                      </Box>
+                    )}
                   </Box>
                 )}
               </>

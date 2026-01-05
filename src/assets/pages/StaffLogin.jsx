@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
 import AuthLayout from './AuthLayout'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { getRoleFromToken, getNameFromToken } from '../../utils/auth'
 
 function StaffLogin({ onLoginSuccess }) {
+  const navigate = useNavigate()
   const [form, setForm] = useState({ Email: '', Password: '', SecretCode: '' })
   const [message, setMessage] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -27,6 +28,14 @@ function StaffLogin({ onLoginSuccess }) {
       } else {
         const token = data?.token
         if (token) localStorage.setItem('token', token)
+        
+        // Check if user must change password
+        if (data?.mustChangePassword === true) {
+          setMessage('You must change your password before continuing')
+          navigate('/set-initial-password')
+          return
+        }
+        
         setMessage(data?.message || 'Login successful')
 
         // Prefer role from token claims if available

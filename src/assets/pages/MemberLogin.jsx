@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
 import AuthLayout from './AuthLayout'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { getRoleFromToken, getNameFromToken } from '../../utils/auth'
 
 function MemberLogin({ onLoginSuccess }) {
+  const navigate = useNavigate()
   const [form, setForm] = useState({ Email: '', Password: '' })
   const [message, setMessage] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -26,6 +27,14 @@ function MemberLogin({ onLoginSuccess }) {
       } else {
         const token = data?.token
         if (token) localStorage.setItem('token', token)
+        
+        // Check if user needs to select topics of interest
+        if (data?.needsTopicSelection === true) {
+          setMessage('Please select your topics of interest')
+          navigate('/select-topics')
+          return
+        }
+        
         setMessage(data?.message || 'Login successful')
 
         // Prefer role from token claims if available

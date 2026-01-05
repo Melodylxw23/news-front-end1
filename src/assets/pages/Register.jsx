@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import AuthLayout from './AuthLayout'
 import { Link } from 'react-router-dom'
 
@@ -9,6 +9,7 @@ function Register() {
     Email: '',
     WeChatWorkId: '',
     Country: '',
+    IndustryTagId: '', // Add industry field
     PreferredLanguage: '',
     PreferredChannel: '',
     MembershipType: '',
@@ -17,6 +18,23 @@ function Register() {
   })
   const [message, setMessage] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [industries, setIndustries] = useState([]) // Store industries from backend
+
+  // Fetch industries on component mount
+  useEffect(() => {
+    const fetchIndustries = async () => {
+      try {
+        const res = await fetch('/api/IndustryTags')
+        if (res.ok) {
+          const data = await res.json()
+          setIndustries(data?.data || [])
+        }
+      } catch (err) {
+        console.error('Error fetching industries:', err)
+      }
+    }
+    fetchIndustries()
+  }, [])
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -45,6 +63,7 @@ function Register() {
           Email: '',
           WeChatWorkId: '',
           Country: '',
+          IndustryTagId: '',
           PreferredLanguage: '',
           PreferredChannel: '',
           MembershipType: '',
@@ -78,6 +97,16 @@ function Register() {
 
           <label>Country</label>
           <input name="Country" value={form.Country} onChange={handleChange} />
+
+          <label>Industry</label>
+          <select name="IndustryTagId" value={form.IndustryTagId} onChange={handleChange} required>
+            <option value="">Select Industry</option>
+            {industries.map(industry => (
+              <option key={industry.industryTagId} value={industry.industryTagId}>
+                {industry.name}
+              </option>
+            ))}
+          </select>
 
           <label>Preferred Language</label>
           <input name="PreferredLanguage" value={form.PreferredLanguage} onChange={handleChange} />

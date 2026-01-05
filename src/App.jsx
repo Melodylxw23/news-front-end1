@@ -23,6 +23,14 @@ import StaffRegister from './assets/pages/StaffRegister';
 import LoginLanding from './assets/pages/LoginLanding';
 import SourceManagement from './assets/pages/SourceManagement';
 import NewsFetchDashboard from './assets/pages/NewsFetchDashboard';
+import IndustryManagement from './assets/pages/IndustryManagement'
+import InterestManagement from './assets/pages/InterestManagement'
+import CategoryManagement from './assets/pages/CategoryManagement'
+import UserManagement from './assets/pages/UserManagement'
+import SetInitialPassword from './assets/pages/SetInitialPassword'
+import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
+import NotificationPreferences from './assets/pages/NotificationPreferences'
+import NotificationFrequency from './assets/pages/NotificationFrequency'
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -62,8 +70,10 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/claims-management', label: 'Claims', icon: '💼' }
     ],
     admin: [
+      { path: '/admin/users', label: 'User Management', icon: '👥' },
+      { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
-      { path: '/admin/sources', label: 'Source Management', icon: '🗂️' }
+      { path: '/admin/sources', label: 'Source Management', icon: '�️' }
     ],
     advisor: [
       { path: '/dashboard', label: 'Dashboard', icon: '🏠' },
@@ -249,9 +259,17 @@ function AppContent() {
           <Route path={'/register'} element={<Register />} />
           <Route path={'/StaffLogin'} element={<StaffLogin onLoginSuccess={handleLoginSuccessAndNavigate} />} />
           <Route path={'/StaffRegister'} element={<StaffRegister />} />
+          <Route path={'/set-initial-password'} element={<SetInitialPassword />} />
+          <Route path={'/select-topics'} element={<SelectTopicsOfInterest />} />
+          <Route path={'/notification-preferences'} element={<NotificationPreferences />} />
+          <Route path={'/notification-frequency'} element={<NotificationFrequency />} />
           <Route path={'/landing'} element={<LoginLanding />} />
+          <Route path={'/admin/users'} element={<UserManagement />} />
+          <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
           <Route path={'/admin/fetch'} element={<NewsFetchDashboard />} />
+          <Route path={'/admin/industries'} element={<IndustryManagement />} />
+          <Route path={'/admin/interests'} element={<InterestManagement />} />
         </Routes>
       </Box>
     </Flex>
