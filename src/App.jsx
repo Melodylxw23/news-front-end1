@@ -23,6 +23,8 @@ import StaffRegister from './assets/pages/StaffRegister';
 import LoginLanding from './assets/pages/LoginLanding';
 import SourceManagement from './assets/pages/SourceManagement';
 import NewsFetchDashboard from './assets/pages/NewsFetchDashboard';
+import ArticlesList from './assets/pages/ArticlesList';
+import ArticleTranslate from './assets/pages/ArticleTranslate';
 import IndustryManagement from './assets/pages/IndustryManagement'
 import InterestManagement from './assets/pages/InterestManagement'
 import CategoryManagement from './assets/pages/CategoryManagement'
@@ -31,6 +33,7 @@ import SetInitialPassword from './assets/pages/SetInitialPassword'
 import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
 import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
+import { p } from 'framer-motion/client';
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -64,7 +67,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
   useEffect(() => { if (isLoaded) setAnimationKey(k => k + 1); }, [isCollapsed, isLoaded]);
 
   const navItemsByRole = {
-    client: [
+    member: [
       { path: '/client-profile', label: 'Profile', icon: '👤' },
       { path: '/family-member', label: 'Family Members', icon: '👪' },
       { path: '/claims-management', label: 'Claims', icon: '💼' }
@@ -75,15 +78,8 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
       { path: '/admin/sources', label: 'Source Management', icon: '�️' }
     ],
-    advisor: [
-      { path: '/dashboard', label: 'Dashboard', icon: '🏠' },
-      { path: '/advisor-profile', label: 'Profile', icon: '👤' },
-      { path: '/assistant-profile', label: 'Assistants', icon: '🧑‍💼' },
-      { path: '/client-list', label: 'Clients', icon: '👥' }
-    ],
-    assistant: [
-      { path: '/assistant-profile', label: 'Profile', icon: '👤' },
-      { path: '/client-list', label: 'Clients', icon: '👥' }
+    consultant: [
+      { path: '/consultant/articles', label: 'Articles', icon: '📰'},
     ]
   };
 
@@ -252,7 +248,7 @@ function AppContent() {
         </>
       )}
 
-      <Box flex="1" p={isAuthPage ? 0 : { base: 2, md: 8 }} minH="100vh" ml={!isMobile && showSidebar ? sidebarWidth + 'px' : 0} transition="margin-left 0.3s" overflowX="hidden" maxW={!isMobile && showSidebar ? `calc(100vw - ${sidebarWidth}px)` : '100vw'}>
+      <Box flex="1" p={isAuthPage ? 0 : 0} minH="100vh" ml={!isMobile && showSidebar ? sidebarWidth + 'px' : 0} transition="margin-left 0.3s" overflowX="hidden" maxW={!isMobile && showSidebar ? `calc(100vw - ${sidebarWidth}px)` : '100vw'}>
         <Routes>
           <Route path={'/'} element={<Navigate to="/MemberLogin" replace />} />
           <Route path={'/MemberLogin'} element={<MemberLogin onLoginSuccess={handleLoginSuccessAndNavigate} />} />
@@ -268,6 +264,8 @@ function AppContent() {
           <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
           <Route path={'/admin/fetch'} element={<NewsFetchDashboard />} />
+          <Route path={'/consultant/articles'} element={<ArticlesList />} />
+          <Route path={'/consultant/articles/:id'} element={<ArticleTranslate />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
         </Routes>
