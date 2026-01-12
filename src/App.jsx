@@ -33,7 +33,8 @@ import SetInitialPassword from './assets/pages/SetInitialPassword'
 import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
 import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
-import { p } from 'framer-motion/client';
+import BroadcastManagement from './assets/pages/BroadcastManagement';
+import { p, path } from 'framer-motion/client';
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -76,7 +77,8 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/admin/users', label: 'User Management', icon: '👥' },
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
-      { path: '/admin/sources', label: 'Source Management', icon: '�️' }
+      { path: '/admin/sources', label: 'Source Management', icon: '�️' },
+      { path: '/admin/broadcast', label: 'Broadcast Management', icon: '📢' },
     ],
     consultant: [
       { path: '/consultant/articles', label: 'Articles', icon: '📰'},
@@ -268,6 +270,7 @@ function AppContent() {
           <Route path={'/consultant/articles/:id'} element={<ArticleTranslate />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
+          <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />
         </Routes>
       </Box>
     </Flex>
