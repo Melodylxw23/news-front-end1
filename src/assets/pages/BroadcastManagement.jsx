@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { getRoleFromToken } from '../../utils/auth';
+import { useNavigate } from 'react-router-dom';
+
+// Add CSS for loading animation
+const styleSheet = document.createElement("style");
+styleSheet.textContent = `
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+`;
+document.head.appendChild(styleSheet);
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || '';
 
@@ -23,17 +33,21 @@ const apiFetch = async (path, opts = {}) => {
 };
 
 const BroadcastManagement = () => {
+    const navigate = useNavigate();
     const [formData, setFormData] = useState({
         title: '',
         subject: '',
         body: '',
         channel: 'Email',
+        id: null
     });
     const [drafts, setDrafts] = useState([]);
     const [aiPrompt, setAiPrompt] = useState('');
     const [showAiAssistant, setShowAiAssistant] = useState(false);
     const [generatedContent, setGeneratedContent] = useState(null);
-    const [showDraftsModal, setShowDraftsModal] = useState(false);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [showScheduleModal, setShowScheduleModal] = useState(false);
+    const [scheduledTime, setScheduledTime] = useState('');
 
     useEffect(() => {
         fetchDrafts();
@@ -41,7 +55,7 @@ const BroadcastManagement = () => {
 
     const fetchDrafts = async () => {
         try {
-            const response = await apiFetch('/api/Broadcast/drafts');
+            const response = await apiFetch('/api/Broadcast');
             console.log('[fetchDrafts] response:', response);
             // Handle both response formats: { data: [...] } or direct array
             const draftsData = response?.data || response || [];
@@ -62,30 +76,56 @@ const BroadcastManagement = () => {
         try {
             console.log('[handleSubmit] sending:', formData);
             
-            const response = await apiFetch('/api/Broadcast/drafts', {
+            const submitData = {
+                Title: formData.title,
+                Subject: formData.subject,
+                Body: formData.body,
+                Channel: formData.channel
+            };
+            // Include scheduled send time if set
+            if (formData.scheduledSendAt) {
+                submitData.ScheduledSendAt = formData.scheduledSendAt;
+            }
+            
+            const response = await apiFetch('/api/Broadcast', {
                 method: 'POST',
-                body: JSON.stringify({
-                    Title: formData.title,
-                    Subject: formData.subject,
-                    Body: formData.body,
-                    Channel: formData.channel
-                })
+                body: JSON.stringify(submitData)
             });
             
             console.log('[handleSubmit] response:', response);
             alert('Draft saved successfully!');
+            // Capture the draft ID from response
+            const draftId = response?.id || response?.Id;
+            setFormData({ title: '', subject: '', body: '', channel: 'Email', id: draftId, scheduledSendAt: '' });
             fetchDrafts();
-            setFormData({ title: '', subject: '', body: '', channel: 'Email' });
         } catch (error) {
             console.error('[handleSubmit] error:', error);
             alert('Failed to save draft: ' + error.message + '\n\nPlease check the browser console and verify your backend endpoint.');
         }
     };
 
+    const clearSchedule = () => {
+        setFormData({ ...formData, scheduledSendAt: '' });
+        setShowScheduleModal(false);
+        setScheduledTime('');
+    };
+
+    const handleSendBroadcast = async () => {
+        if (!formData.subject || !formData.body) {
+            alert('Please fill in the subject and message body before sending.');
+            return;
+        }
+        
+        if (!window.confirm(`Send "${formData.subject}" broadcast now?`)) return;
+        
+        // Simply navigate to the dummy success page
+        navigate('/message-sent', { state: { broadcastSubject: formData.subject } });
+    };
+
     const handleDelete = async (id) => {
         try {
             console.log('[handleDelete] deleting:', id);
-            await apiFetch(`/api/Broadcast/drafts/${id}`, { method: 'DELETE' });
+            await apiFetch(`/api/Broadcast/${id}`, { method: 'DELETE' });
             alert('Draft deleted successfully!');
             fetchDrafts();
         } catch (error) {
@@ -94,12 +134,28 @@ const BroadcastManagement = () => {
         }
     };
 
+    const handleScheduleSubmit = () => {
+        if (!scheduledTime) {
+            alert('Please select a date and time');
+            return;
+        }
+        setFormData({ ...formData, scheduledSendAt: scheduledTime });
+        setShowScheduleModal(false);
+        alert('Message scheduled for: ' + new Date(scheduledTime).toLocaleString());
+    };
+
+    const formatScheduledTime = (dateString) => {
+        if (!dateString) return 'Not scheduled';
+        return new Date(dateString).toLocaleString();
+    };
+
     const handleAiPromptSubmit = async (e) => {
         e.preventDefault();
+        setIsGenerating(true);
         try {
             console.log('[handleAiPromptSubmit] sending prompt:', aiPrompt);
 
-            const response = await apiFetch('/api/Broadcast/generate', {
+            const response = await apiFetch('/api/broadcast/generate', {
                 method: 'POST',
                 body: JSON.stringify({ Prompt: aiPrompt })
             });
@@ -119,6 +175,8 @@ const BroadcastManagement = () => {
         } catch (error) {
             console.error('[handleAiPromptSubmit] error:', error);
             alert('Failed to generate message: ' + error.message);
+        } finally {
+            setIsGenerating(false);
         }
     };
 
@@ -150,7 +208,7 @@ const BroadcastManagement = () => {
                         <h1 style={{ fontSize: '28px', fontWeight: '700', color: '#333', margin: 0 }}>Create Broadcast Message</h1>
                         <div style={{ display: 'flex', gap: '12px' }}>
                             <button
-                                onClick={() => setShowDraftsModal(true)}
+                                onClick={() => navigate('/drafts')}
                                 style={{
                                     padding: '10px 20px',
                                     background: 'white',
@@ -298,18 +356,38 @@ const BroadcastManagement = () => {
                                     </div>
                                     <button
                                         type="submit"
+                                        disabled={isGenerating}
                                         style={{
                                             padding: '10px 20px',
-                                            background: '#dc2626',
+                                            background: isGenerating ? '#dc262633' : '#dc2626',
                                             color: 'white',
                                             border: 'none',
                                             borderRadius: '6px',
-                                            cursor: 'pointer',
+                                            cursor: isGenerating ? 'not-allowed' : 'pointer',
                                             fontSize: '14px',
-                                            fontWeight: '500'
+                                            fontWeight: '500',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '8px'
                                         }}
                                     >
-                                        Generate Content
+                                        {isGenerating ? (
+                                            <>
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    width: '14px',
+                                                    height: '14px',
+                                                    border: '2px solid rgba(255,255,255,0.3)',
+                                                    borderTop: '2px solid white',
+                                                    borderRadius: '50%',
+                                                    animation: 'spin 0.6s linear infinite'
+                                                }} />
+                                                Generating...
+                                            </>
+                                        ) : (
+                                            'Generate Content'
+                                        )}
                                     </button>
                                 </form>
 
@@ -348,6 +426,30 @@ const BroadcastManagement = () => {
                                 )}
                             </div>
                         )}
+
+                        {/* Title */}
+                        <div style={{ marginBottom: '16px' }}>
+                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
+                                Title (Template Name)
+                            </label>
+                            <input
+                                type="text"
+                                name="title"
+                                value={formData.title}
+                                onChange={handleChange}
+                                placeholder="e.g., Weekly Newsletter, Product Launch, etc..."
+                                style={{
+                                    width: '100%',
+                                    padding: '12px',
+                                    border: '1px solid #e5e7eb',
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    fontFamily: 'inherit',
+                                    boxSizing: 'border-box'
+                                }}
+                            />
+                            <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>Used to identify this broadcast template</div>
+                        </div>
 
                         {/* Subject Line */}
                         <div style={{ marginBottom: '16px' }}>
@@ -444,7 +546,33 @@ const BroadcastManagement = () => {
                     <div style={{ background: 'white', padding: '20px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', marginBottom: '20px' }}>
                         <h3 style={{ fontSize: '15px', fontWeight: '600', marginBottom: '16px' }}>Actions</h3>
                         <button
-                            onClick={(e) => { e.preventDefault(); alert('Send Broadcast functionality coming soon!'); }}
+                            onClick={() => setShowScheduleModal(true)}
+                            style={{
+                                width: '100%',
+                                padding: '12px',
+                                background: '#8b5cf6',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: '600',
+                                marginBottom: '10px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '8px'
+                            }}
+                        >
+                            <span>⏰</span> Schedule Message
+                        </button>
+                        {formData.scheduledSendAt && (
+                            <div style={{ fontSize: '12px', color: '#666', marginBottom: '10px', padding: '8px', background: '#f3f4f6', borderRadius: '4px' }}>
+                                Scheduled for: {formatScheduledTime(formData.scheduledSendAt)}
+                            </div>
+                        )}
+                        <button
+                            onClick={handleSendBroadcast}
                             style={{
                                 width: '100%',
                                 padding: '12px',
@@ -523,8 +651,8 @@ const BroadcastManagement = () => {
                 </div>
             </div>
 
-            {/* Drafts Modal */}
-            {showDraftsModal && (
+            {/* Schedule Message Modal */}
+            {showScheduleModal && (
                 <div style={{
                     position: 'fixed',
                     top: 0,
@@ -541,15 +669,13 @@ const BroadcastManagement = () => {
                         background: 'white',
                         padding: '32px',
                         borderRadius: '12px',
-                        maxWidth: '600px',
-                        width: '90%',
-                        maxHeight: '80vh',
-                        overflow: 'auto'
+                        maxWidth: '400px',
+                        width: '90%'
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                            <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Saved Drafts</h2>
+                            <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Schedule Message</h2>
                             <button
-                                onClick={() => setShowDraftsModal(false)}
+                                onClick={() => setShowScheduleModal(false)}
                                 style={{
                                     background: 'none',
                                     border: 'none',
@@ -561,50 +687,77 @@ const BroadcastManagement = () => {
                                 ×
                             </button>
                         </div>
-                        {drafts.length === 0 ? (
-                            <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
-                                No drafts saved yet
+
+                        <div style={{ marginBottom: '24px' }}>
+                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
+                                Select Date and Time
+                            </label>
+                            <input
+                                type="datetime-local"
+                                value={scheduledTime}
+                                onChange={(e) => setScheduledTime(e.target.value)}
+                                min={new Date().toISOString().slice(0, 16)}
+                                style={{
+                                    width: '100%',
+                                    padding: '12px',
+                                    border: '1px solid #e5e7eb',
+                                    borderRadius: '6px',
+                                    fontSize: '14px',
+                                    fontFamily: 'inherit',
+                                    boxSizing: 'border-box'
+                                }}
+                            />
+                            <div style={{ fontSize: '12px', color: '#999', marginTop: '4px' }}>
+                                Minimum time: {new Date().toLocaleString()}
                             </div>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                {drafts.map(draft => (
-                                    <div
-                                        key={draft.id}
-                                        style={{
-                                            padding: '16px',
-                                            border: '1px solid #e5e7eb',
-                                            borderRadius: '8px',
-                                            transition: 'all 0.2s'
-                                        }}
-                                    >
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
-                                            <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0, color: '#333' }}>{draft.title || draft.subject}</h3>
-                                            <button
-                                                onClick={() => handleDelete(draft.id)}
-                                                style={{
-                                                    padding: '4px 12px',
-                                                    background: '#fee',
-                                                    color: '#dc2626',
-                                                    border: 'none',
-                                                    borderRadius: '4px',
-                                                    cursor: 'pointer',
-                                                    fontSize: '12px',
-                                                    fontWeight: '500'
-                                                }}
-                                            >
-                                                Delete
-                                            </button>
-                                        </div>
-                                        <p style={{ fontSize: '14px', color: '#666', margin: '8px 0', lineHeight: '1.5' }}>
-                                            {draft.body?.substring(0, 100)}{draft.body?.length > 100 ? '...' : ''}
-                                        </p>
-                                        <div style={{ fontSize: '12px', color: '#999' }}>
-                                            Channel: {draft.channel || 'Email'}
-                                        </div>
-                                    </div>
-                                ))}
+                        </div>
+
+                        {scheduledTime && (
+                            <div style={{ marginBottom: '24px', padding: '12px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #86efac' }}>
+                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Scheduled send time:</div>
+                                <div style={{ fontSize: '14px', fontWeight: '600', color: '#333' }}>
+                                    {new Date(scheduledTime).toLocaleString()}
+                                </div>
                             </div>
                         )}
+
+                        <div style={{ display: 'flex', gap: '12px' }}>
+                            <button
+                                onClick={handleScheduleSubmit}
+                                style={{
+                                    flex: 1,
+                                    padding: '12px',
+                                    background: '#8b5cf6',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    fontSize: '14px',
+                                    fontWeight: '600'
+                                }}
+                            >
+                                Confirm Schedule
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowScheduleModal(false);
+                                    setScheduledTime('');
+                                }}
+                                style={{
+                                    flex: 1,
+                                    padding: '12px',
+                                    background: '#f3f4f6',
+                                    color: '#333',
+                                    border: '1px solid #e5e7eb',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    fontSize: '14px',
+                                    fontWeight: '500'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

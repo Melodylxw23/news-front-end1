@@ -34,6 +34,8 @@ import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
 import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
 import BroadcastManagement from './assets/pages/BroadcastManagement';
+import DraftsList from './assets/pages/DraftsList';
+import MessageSent from './assets/pages/MessageSent';
 import { p, path } from 'framer-motion/client';
 
 // Sidebar component (trimmed to use only existing pages)
@@ -271,6 +273,8 @@ function AppContent() {
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
           <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />
+          <Route path={'/drafts'} element={<DraftsList />} />
+          <Route path={'/message-sent'} element={<MessageSent />} />
         </Routes>
       </Box>
     </Flex>
