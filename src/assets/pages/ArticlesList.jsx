@@ -31,7 +31,7 @@ const styles = {
 
 export default function ArticlesList() {
   const [page, setPage] = useState(1)
-  const [pageSize] = useState(50)
+  const [pageSize] = useState(5)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
@@ -42,20 +42,27 @@ export default function ArticlesList() {
   const [initialized, setInitialized] = useState(false)
   const [activeTab, setActiveTab] = useState('active') // 'active' or 'translated'
   const [query, setQuery] = useState('')
-  const [sortBy, setSortBy] = useState('default') // default | pending | inProgress | idAsc
+  const [sortBy, setSortBy] = useState('default') // default | pendingOnly | inProgressOnly | pendingFirst | inProgressFirst
   const [showDebug, setShowDebug] = useState(false)
+  const [pageJump, setPageJump] = useState('')
 
-  useEffect(() => { if (initialized) loadPage(page) }, [page, initialized])
+  useEffect(() => { if (initialized) loadPage(page) }, [page, initialized, activeTab, sortBy])
   // reload when other pages signal that articles changed (save/approve)
   useEffect(() => {
     const handler = () => { if (initialized) loadPage(page) }
     window.addEventListener('articles:changed', handler)
     return () => window.removeEventListener('articles:changed', handler)
-  }, [page])
+  }, [page, initialized, activeTab, sortBy])
   // reset to page 1 when switching tabs
   useEffect(() => {
     setPage(1)
   }, [activeTab])
+  // reset to page 1 when using status-only filters
+  useEffect(() => {
+    if ((sortBy === 'pendingOnly' || sortBy === 'inProgressOnly') && page !== 1) {
+      setPage(1)
+    }
+  }, [sortBy])
   useEffect(() => {
     (async () => {
       try {
@@ -79,9 +86,30 @@ export default function ArticlesList() {
       if (!sourcesMap || Object.keys(sourcesMap).length === 0) {
         try { await loadSources() } catch (e) { /* ignore - we'll still attempt to show items */ }
       }
-      const res = await listArticles(pageToLoad, pageSize)
-      const itemsPage = (res && (res.Items || res.items)) ? (res.Items || res.items) : []
-      const totalCount = (res && (res.Total || res.total)) ? (res.Total || res.total) : itemsPage.length
+      // Determine status filter based on active tab and sortBy
+      let statusFilter = null
+      if (activeTab === 'translated') {
+        statusFilter = 'translated'
+      } else if (activeTab === 'active') {
+        if (sortBy === 'pendingOnly') statusFilter = 'pending'
+        else if (sortBy === 'inProgressOnly') statusFilter = 'inProgress'
+        // For 'default', 'pendingFirst', 'inProgressFirst', don't filter by status on backend
+        // Backend should return both pending and inProgress when status is null or 'active'
+      }
+      const res = await listArticles(pageToLoad, pageSize, statusFilter)
+      // Normalize multiple possible response shapes
+      const itemsPage = Array.isArray(res)
+        ? res
+        : Array.isArray(res?.Items)
+          ? res.Items
+          : Array.isArray(res?.items)
+            ? res.items
+            : Array.isArray(res?.Data)
+              ? res.Data
+              : Array.isArray(res?.data)
+                ? res.data
+                : []
+      const totalCount = res?.Total ?? res?.total ?? res?.Count ?? res?.count ?? itemsPage.length
       // Use only server-provided articles. Client-side `recentArticles` merge
       // was removed to ensure the UI strictly reflects database state.
       let merged = [...itemsPage]
@@ -192,30 +220,28 @@ export default function ArticlesList() {
   // status counts: `total` is overall total from server; other counts are computed from current page
   const isTranslated = (it) => {
     const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
-    const saved = it.TranslationSavedAt ?? it.translationSavedAt ?? null
-    
-    // Backend considers translated if: saved timestamp exists OR status is Translated
-    // This matches the stats endpoint logic
-    if (saved) return true
+    const approved = it.TranslationApprovedAt ?? it.translationApprovedAt ?? null
+
+    // Consider translated only when approved or explicitly marked translated/approved
+    if (approved) return true
+    if (s.includes('approved')) return true
     if (s.includes('translated')) return true
-    
-    // Everything else (Pending, InProgress, etc) is NOT translated
+
+    // Pending / In Progress are not translated
     return false
   }
 
   const pageCounts = items.reduce((acc, it) => {
     const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
-    const saved = it.TranslationSavedAt ?? it.translationSavedAt ?? null
     acc.page += 1
-    
-    // Match backend stats logic:
+
     // InProgress: status is InProgress (being actively translated or needing review)
     if (s.includes('inprogress') || s.includes('in progress')) acc.inProgress += 1
-    // Translated: has saved timestamp OR status is Translated
-    else if (saved || s.includes('translated')) acc.translated += 1
-    // Pending: everything else (not started, no saved translation)
+    // Translated: only when approved/translated per isTranslated
+    else if (isTranslated(it)) acc.translated += 1
+    // Pending: everything else
     else acc.pending += 1
-    
+
     return acc
   }, { page: 0, pending: 0, inProgress: 0, translated: 0 })
 
@@ -232,24 +258,23 @@ export default function ArticlesList() {
 
   const renderBadge = (item) => {
     const s = ((item && (item.TranslationStatus || item.translationStatus)) || '').toString().toLowerCase()
-    const saved = item && (item.TranslationSavedAt || item.translationSavedAt)
     const base = { padding: '6px 10px', borderRadius: 12, fontWeight: 600, fontSize: 12 }
-    
+
     // InProgress: being actively translated (by user or needs review after crawler)
     if (s.includes('inprogress') || s.includes('in progress')) {
       return <span style={{ ...base, background: '#fff4e6', color: '#e07a16' }}>In Progress</span>
     }
-    
-    // Translated: has saved translation timestamp OR status is Translated
-    if (saved || s.includes('translated')) {
+
+    // Translated: only when approved/translated per new rule
+    if (isTranslated(item)) {
       return <span style={{ ...base, background: '#e8f9ee', color: '#1e7a3a' }}>Translated</span>
     }
-    
-    // Pending: not started (no saved translation, not in progress)
+
+    // Pending: not started (no approval yet)
     if (!s || s === 'pending' || s.includes('pending')) {
       return <span style={{ ...base, background: '#e6f0ff', color: '#1e73d1' }}>Pending</span>
     }
-    
+
     // Fallback for any other status
     return <span style={{ ...base, background: '#f3f4f6', color: '#444' }}>{item.TranslationStatus || item.translationStatus || 'Unknown'}</span>
   }
@@ -258,9 +283,42 @@ export default function ArticlesList() {
   // Use the same `pageSize` for server requests and UI pagination to avoid
   // duplicated items across pages when sizes differ.
   const viewPageSize = pageSize
-  const totalPages = Math.max(1, Math.ceil((total || 0) / viewPageSize))
+  
+  // Adjust total count based on active filter AND active tab
+  let effectiveTotal = total
+  if (sortBy === 'pendingOnly') {
+    effectiveTotal = displayCounts.pending
+  } else if (sortBy === 'inProgressOnly') {
+    effectiveTotal = displayCounts.inProgress
+  } else {
+    // When no status filter is selected, use tab-appropriate totals
+    if (activeTab === 'active') {
+      // Active tab excludes translated articles
+      effectiveTotal = displayCounts.pending + displayCounts.inProgress
+    } else if (activeTab === 'translated') {
+      // Translated tab shows only translated articles
+      effectiveTotal = displayCounts.translated
+    }
+    // else use total for any other tab
+  }
+  const totalPages = Math.max(1, Math.ceil((effectiveTotal || 0) / viewPageSize))
 
-  const filtered = items.filter(it => {
+  const getStatusCategory = (it) => {
+    const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
+    if (s.includes('inprogress') || s.includes('in progress')) return 'inProgress'
+    if (isTranslated(it)) return 'translated'
+    return 'pending'
+  }
+
+  // Apply status-only filters BEFORE tab filtering so they work independently
+  let statusFiltered = items.slice()
+  if (sortBy === 'pendingOnly') {
+    statusFiltered = statusFiltered.filter(it => getStatusCategory(it) === 'pending')
+  } else if (sortBy === 'inProgressOnly') {
+    statusFiltered = statusFiltered.filter(it => getStatusCategory(it) === 'inProgress')
+  }
+
+  const filtered = statusFiltered.filter(it => {
     // active: exclude translated items
     if (activeTab === 'active' && isTranslated(it)) return false
     // translated: include only translated items (saved or explicitly translated/approved)
@@ -276,38 +334,30 @@ export default function ArticlesList() {
 
   console.log(`Active tab: ${activeTab}, Items: ${items.length}, Filtered: ${filtered.length}`)
 
-  const getStatusCategory = (it) => {
-    const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
-    const saved = it.TranslationSavedAt ?? it.translationSavedAt ?? null
-    
-    // Match backend logic
-    if (s.includes('inprogress') || s.includes('in progress')) return 'inProgress'
-    if (saved || s.includes('translated')) return 'translated'
-    return 'pending'
-  }
-
   const sorted = (() => {
     const arr = filtered.slice()
-    if (sortBy === 'idAsc') return arr.sort((a,b) => (Number(a.NewsArticleId ?? a.newsArticleId ?? a.ArticleId ?? a.articleId ?? a.id ?? 0) - Number(b.NewsArticleId ?? b.newsArticleId ?? b.ArticleId ?? b.articleId ?? b.id ?? 0)))
-    const priority = (cat) => {
-      if (sortBy === 'pending') {
-        if (cat === 'pending') return 0
-        if (cat === 'inProgress') return 1
-        return 2
-      }
-      if (sortBy === 'inProgress') {
-        if (cat === 'inProgress') return 0
-        if (cat === 'pending') return 1
-        return 2
-      }
-      return 1 // default keep stable
+
+    // "First" sorts: prioritize status but show all (status-only filters already applied above)
+    if (sortBy === 'pendingFirst') {
+      return arr.sort((a, b) => {
+        const aCat = getStatusCategory(a)
+        const bCat = getStatusCategory(b)
+        if (aCat === 'pending' && bCat !== 'pending') return -1
+        if (aCat !== 'pending' && bCat === 'pending') return 1
+        return 0
+      })
     }
-    return arr.sort((a,b) => {
-      const pa = priority(getStatusCategory(a))
-      const pb = priority(getStatusCategory(b))
-      if (pa !== pb) return pa - pb
-      return Number(a.NewsArticleId ?? a.newsArticleId ?? a.ArticleId ?? a.articleId ?? a.id ?? 0) - Number(b.NewsArticleId ?? b.newsArticleId ?? b.ArticleId ?? b.articleId ?? b.id ?? 0)
-    })
+    if (sortBy === 'inProgressFirst') {
+      return arr.sort((a, b) => {
+        const aCat = getStatusCategory(a)
+        const bCat = getStatusCategory(b)
+        if (aCat === 'inProgress' && bCat !== 'inProgress') return -1
+        if (aCat !== 'inProgress' && bCat === 'inProgress') return 1
+        return 0
+      })
+    }
+
+    return arr
   })()
 
   return (
@@ -365,10 +415,11 @@ export default function ArticlesList() {
                 <div style={{ ...styles.controls, marginLeft: 'auto' }}>
                   <input placeholder="🔍 Search" value={query} onChange={e => setQuery(e.target.value)} style={styles.input} />
                   <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...styles.select, background: '#f5f5f5', padding: '8px 12px', cursor: 'pointer' }}>
-                    <option value="default">Sort By ▼</option>
-                    <option value="pending">Sort: Pending First</option>
-                    <option value="inProgress">Sort: In Progress First</option>
-                    <option value="idAsc">Sort: ID Asc</option>
+                    <option value="default">Filter By ▼</option>
+                    <option value="pendingOnly">Pending Only</option>
+                    <option value="inProgressOnly">In Progress Only</option>
+                    <option value="pendingFirst">Pending First</option>
+                    <option value="inProgressFirst">In Progress First</option>
                   </select>
                 </div>
               </div>
@@ -427,11 +478,83 @@ export default function ArticlesList() {
               </table>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 24, gap: 8 }}>
-              <div style={{ background: 'white', padding: 8, borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button onClick={() => setPage(Math.max(1, page - 1))} style={{ background: 'transparent', border: 'none', padding: '8px 12px', cursor: 'pointer', color: '#999', fontSize: 18 }}>◀</button>
-                <button style={{ background: '#c92b2b', color: 'white', border: 'none', padding: '8px 16px', borderRadius: 6, fontWeight: 600, minWidth: 40, cursor: 'default', fontSize: 14 }}>{page}</button>
-                <button onClick={() => setPage(Math.min(totalPages, page + 1))} style={{ background: 'transparent', border: 'none', padding: '8px 12px', cursor: 'pointer', color: '#999', fontSize: 18 }}>▶</button>
+            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 24, gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ background: 'white', padding: 10, borderRadius: 12, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={() => setPage(Math.max(1, page - 1))}
+                  disabled={page <= 1}
+                  style={{ background: 'transparent', border: 'none', padding: '8px 10px', cursor: page <= 1 ? 'default' : 'pointer', color: page <= 1 ? '#ccc' : '#999', fontSize: 18 }}
+                >◀</button>
+
+                {(() => {
+                  const windowSize = 1
+                  const pages = new Set()
+                  pages.add(1)
+                  pages.add(totalPages)
+                  for (let p = page - windowSize; p <= page + windowSize; p += 1) {
+                    if (p >= 1 && p <= totalPages) pages.add(p)
+                  }
+                  const sortedPages = Array.from(pages).sort((a, b) => a - b)
+
+                  const buttons = []
+                  sortedPages.forEach((p, idx) => {
+                    const prev = sortedPages[idx - 1]
+                    if (idx > 0 && p - prev > 1) {
+                      buttons.push(<span key={`gap-${p}`} style={{ padding: '0 4px', color: '#999' }}>…</span>)
+                    }
+                    const isActive = p === page
+                    buttons.push(
+                      <button
+                        key={p}
+                        onClick={() => setPage(p)}
+                        style={{
+                          background: isActive ? '#c92b2b' : '#f5f5f5',
+                          color: isActive ? 'white' : '#555',
+                          border: 'none',
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          fontWeight: 600,
+                          minWidth: 36,
+                          cursor: isActive ? 'default' : 'pointer',
+                          fontSize: 14
+                        }}
+                      >{p}</button>
+                    )
+                  })
+                  return buttons
+                })()}
+
+                <button
+                  onClick={() => setPage(Math.min(totalPages, page + 1))}
+                  disabled={page >= totalPages}
+                  style={{ background: 'transparent', border: 'none', padding: '8px 10px', cursor: page >= totalPages ? 'default' : 'pointer', color: page >= totalPages ? '#ccc' : '#999', fontSize: 18 }}
+                >▶</button>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="number"
+                  min="1"
+                  value={pageJump}
+                  onChange={(e) => setPageJump(e.target.value)}
+                  placeholder="Go to page"
+                  style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e2e2e2', width: 110 }}
+                />
+                <button
+                  onClick={() => {
+                    const num = Number(pageJump)
+                    if (!num || Number.isNaN(num) || num < 1) {
+                      alert('Enter a valid page number (1 or higher).')
+                      return
+                    }
+                    if (num > totalPages) {
+                      alert(`Maximum page is ${totalPages}.`)
+                      return
+                    }
+                    setPage(num)
+                  }}
+                  style={{ padding: '8px 12px', borderRadius: 8, border: 'none', background: '#c92b2b', color: 'white', fontWeight: 600, cursor: 'pointer' }}
+                >Go</button>
               </div>
             </div>
 

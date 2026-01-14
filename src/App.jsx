@@ -36,6 +36,7 @@ import NotificationFrequency from './assets/pages/NotificationFrequency'
 import BroadcastManagement from './assets/pages/BroadcastManagement';
 import DraftsList from './assets/pages/DraftsList';
 import MessageSent from './assets/pages/MessageSent';
+import ContentCreation from './assets/pages/ContentCreation';
 import { p, path } from 'framer-motion/client';
 
 // Sidebar component (trimmed to use only existing pages)
@@ -84,6 +85,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     ],
     consultant: [
       { path: '/consultant/articles', label: 'Articles', icon: '📰'},
+      { path: '/consultant/content-creation', label: 'Content Creation', icon: '✨'},
     ]
   };
 
@@ -134,12 +136,10 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
           {!isCollapsed && (
             <VStack align="center" spacing={2} w="100%" animation={isLoaded ? `${slideInLeft} 0.8s ease-out 0.2s both` : undefined}>
               <Flex align="center" gap={3}>
-                <Box w="70px" h="70px" borderRadius="10px" display="flex" alignItems="center" justifyContent="center" boxShadow="md">
-                  <Image src="/logo192.png" alt="Logo" boxSize="60px" />
+                <Box w="130px" h="130px" display="flex" alignItems="center" justifyContent="center">
+                  <Image src="/logo.svg" alt="Logo" boxSize="130px" />
                 </Box>
               </Flex>
-              <Text fontSize="4xl" fontWeight="700">FINSYNC</Text>
-              <Text fontSize="2xs" color="whiteAlpha.700">Your Portfolio, Perfectly Prepared</Text>
             </VStack>
           )}
         </Flex>
@@ -163,11 +163,6 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
           </VStack>
         </Box>
       </Box>
-
-      <Box px={isCollapsed ? 2 : 4} py={4}>
-        <Separator borderColor="whiteAlpha.200" mb={4} />
-        <Box px={2}><Text fontSize="xs" color="whiteAlpha.500" textAlign="center">© 2025 FinSync</Text></Box>
-      </Box>
     </VStack>
   );
 
@@ -175,7 +170,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     return (
       <Drawer isOpen={isOpen} placement="left" onClose={onClose}>
           <DrawerBackdrop />
-          <DrawerContent maxW="72vw" bg="linear-gradient(135deg, #1a2332 0%, #16244c 100%)">
+          <DrawerContent maxW="72vw" bg="#ba0006" borderTopRightRadius="20px" borderBottomRightRadius="20px">
             <DrawerBody p={0}>{SidebarContent}</DrawerBody>
           </DrawerContent>
         </Drawer>
@@ -183,13 +178,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
   }
 
   return (
-    <Box w={isCollapsed ? '72px' : '280px'} bg="linear-gradient(135deg, #1a2332 0%, #16244c 100%)" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s">
+    <Box w={isCollapsed ? '72px' : '280px'} bg="#ba0006" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s" borderTopRightRadius="20px" borderBottomRightRadius="20px">
       {SidebarContent}
     </Box>
   );
 
   return (
-    <Box w={isCollapsed ? '72px' : '280px'} bg="linear-gradient(135deg, #1a2332 0%, #16244c 100%)" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s">
+    <Box w={isCollapsed ? '72px' : '280px'} bg="#ba0006" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s" borderTopRightRadius="20px" borderBottomRightRadius="20px">
       {SidebarContent}
     </Box>
   );
@@ -270,6 +265,7 @@ function AppContent() {
           <Route path={'/admin/fetch'} element={<NewsFetchDashboard />} />
           <Route path={'/consultant/articles'} element={<ArticlesList />} />
           <Route path={'/consultant/articles/:id'} element={<ArticleTranslate />} />
+          <Route path={'/consultant/content-creation'} element={<ContentCreation />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
           <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />

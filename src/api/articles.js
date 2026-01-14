@@ -9,8 +9,10 @@ const buildHeaders = () => {
 
 const join = (path) => path.startsWith('http') ? path : `${API_BASE}${path}`
 
-export async function listArticles(page = 1, pageSize = 20) {
-  const res = await fetch(join(`/api/articles?page=${page}&pageSize=${pageSize}`), { headers: buildHeaders() })
+export async function listArticles(page = 1, pageSize = 20, status = null) {
+  let url = `/api/articles?page=${page}&pageSize=${pageSize}`
+  if (status) url += `&status=${encodeURIComponent(status)}`
+  const res = await fetch(join(url), { headers: buildHeaders() })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
