@@ -23,6 +23,8 @@ import StaffRegister from './assets/pages/StaffRegister';
 import LoginLanding from './assets/pages/LoginLanding';
 import SourceManagement from './assets/pages/SourceManagement';
 import NewsFetchDashboard from './assets/pages/NewsFetchDashboard';
+import ArticlesList from './assets/pages/ArticlesList';
+import ArticleTranslate from './assets/pages/ArticleTranslate';
 import IndustryManagement from './assets/pages/IndustryManagement'
 import InterestManagement from './assets/pages/InterestManagement'
 import CategoryManagement from './assets/pages/CategoryManagement'
@@ -32,6 +34,11 @@ import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
 import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
 import MemberProfile from './assets/pages/MemberProfile'
+import BroadcastManagement from './assets/pages/BroadcastManagement';
+import DraftsList from './assets/pages/DraftsList';
+import MessageSent from './assets/pages/MessageSent';
+import ContentCreation from './assets/pages/ContentCreation';
+import { p, path } from 'framer-motion/client';
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -65,7 +72,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
   useEffect(() => { if (isLoaded) setAnimationKey(k => k + 1); }, [isCollapsed, isLoaded]);
 
   const navItemsByRole = {
-    client: [
+    member: [
       { path: '/client-profile', label: 'Profile', icon: '👤' },
       { path: '/family-member', label: 'Family Members', icon: '👪' },
       { path: '/claims-management', label: 'Claims', icon: '💼' }
@@ -83,17 +90,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/admin/users', label: 'User Management', icon: '👥' },
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
-      { path: '/admin/sources', label: 'Source Management', icon: '🗂️' }
+      { path: '/admin/sources', label: 'Source Management', icon: '🗂️' },
+      { path: '/admin/sources', label: 'Source Management', icon: '�️' },
+      { path: '/admin/broadcast', label: 'Broadcast Management', icon: '📢' }
     ],
-    advisor: [
-      { path: '/dashboard', label: 'Dashboard', icon: '🏠' },
-      { path: '/advisor-profile', label: 'Profile', icon: '👤' },
-      { path: '/assistant-profile', label: 'Assistants', icon: '🧑‍💼' },
-      { path: '/client-list', label: 'Clients', icon: '👥' }
-    ],
-    assistant: [
-      { path: '/assistant-profile', label: 'Profile', icon: '👤' },
-      { path: '/client-list', label: 'Clients', icon: '👥' }
+    consultant: [
+      { path: '/consultant/articles', label: 'Articles', icon: '📰'},
+      { path: '/consultant/content-creation', label: 'Content Creation', icon: '✨'},
     ]
   };
 
@@ -144,12 +147,10 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
           {!isCollapsed && (
             <VStack align="center" spacing={2} w="100%" animation={isLoaded ? `${slideInLeft} 0.8s ease-out 0.2s both` : undefined}>
               <Flex align="center" gap={3}>
-                <Box w="70px" h="70px" borderRadius="10px" display="flex" alignItems="center" justifyContent="center" boxShadow="md">
-                  <Image src="/logo192.png" alt="Logo" boxSize="60px" />
+                <Box w="130px" h="130px" display="flex" alignItems="center" justifyContent="center">
+                  <Image src="/logo.svg" alt="Logo" boxSize="130px" />
                 </Box>
               </Flex>
-              <Text fontSize="4xl" fontWeight="700">FINSYNC</Text>
-              <Text fontSize="2xs" color="whiteAlpha.700">Your Portfolio, Perfectly Prepared</Text>
             </VStack>
           )}
         </Flex>
@@ -173,11 +174,6 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
           </VStack>
         </Box>
       </Box>
-
-      <Box px={isCollapsed ? 2 : 4} py={4}>
-        <Separator borderColor="whiteAlpha.200" mb={4} />
-        <Box px={2}><Text fontSize="xs" color="whiteAlpha.500" textAlign="center">© 2025 FinSync</Text></Box>
-      </Box>
     </VStack>
   );
 
@@ -185,7 +181,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     return (
       <Drawer isOpen={isOpen} placement="left" onClose={onClose}>
           <DrawerBackdrop />
-          <DrawerContent maxW="72vw" bg="linear-gradient(135deg, #1a2332 0%, #16244c 100%)">
+          <DrawerContent maxW="72vw" bg="#ba0006" borderTopRightRadius="20px" borderBottomRightRadius="20px">
             <DrawerBody p={0}>{SidebarContent}</DrawerBody>
           </DrawerContent>
         </Drawer>
@@ -193,13 +189,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
   }
 
   return (
-    <Box w={isCollapsed ? '72px' : '280px'} bg="linear-gradient(135deg, #1a2332 0%, #16244c 100%)" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s">
+    <Box w={isCollapsed ? '72px' : '280px'} bg="#ba0006" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s" borderTopRightRadius="20px" borderBottomRightRadius="20px">
       {SidebarContent}
     </Box>
   );
 
   return (
-    <Box w={isCollapsed ? '72px' : '280px'} bg="linear-gradient(135deg, #1a2332 0%, #16244c 100%)" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s">
+    <Box w={isCollapsed ? '72px' : '280px'} bg="#ba0006" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s" borderTopRightRadius="20px" borderBottomRightRadius="20px">
       {SidebarContent}
     </Box>
   );
@@ -262,7 +258,7 @@ function AppContent() {
         </>
       )}
 
-      <Box flex="1" p={isAuthPage ? 0 : { base: 2, md: 8 }} minH="100vh" ml={!isMobile && showSidebar ? sidebarWidth + 'px' : 0} transition="margin-left 0.3s" overflowX="hidden" maxW={!isMobile && showSidebar ? `calc(100vw - ${sidebarWidth}px)` : '100vw'}>
+      <Box flex="1" p={isAuthPage ? 0 : 0} minH="100vh" ml={!isMobile && showSidebar ? sidebarWidth + 'px' : 0} transition="margin-left 0.3s" overflowX="hidden" maxW={!isMobile && showSidebar ? `calc(100vw - ${sidebarWidth}px)` : '100vw'}>
         <Routes>
           <Route path={'/'} element={<Navigate to="/MemberLogin" replace />} />
           <Route path={'/MemberLogin'} element={<MemberLogin onLoginSuccess={handleLoginSuccessAndNavigate} />} />
@@ -279,8 +275,14 @@ function AppContent() {
           <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
           <Route path={'/admin/fetch'} element={<NewsFetchDashboard />} />
+          <Route path={'/consultant/articles'} element={<ArticlesList />} />
+          <Route path={'/consultant/articles/:id'} element={<ArticleTranslate />} />
+          <Route path={'/consultant/content-creation'} element={<ContentCreation />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
+          <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />
+          <Route path={'/drafts'} element={<DraftsList />} />
+          <Route path={'/message-sent'} element={<MessageSent />} />
         </Routes>
       </Box>
     </Flex>

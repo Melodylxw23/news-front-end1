@@ -29,12 +29,25 @@ export default function NewsFetchDashboard() {
     } catch (e) { console.log('toast', opts) }
   }
 
-  useEffect(() => { load(); loadRecentArticles() }, [])
+  useEffect(() => {
+    (async () => {
+      try {
+        await load()
+      } catch (e) {
+        // ignore - load() shows its own toast on error
+      }
+      try {
+        await loadRecentArticles()
+      } catch (e) {
+        // ignore fallback handled inside loadRecentArticles
+      }
+    })()
+  }, [])
 
   // Try to load persisted recent articles from the backend, fall back to localStorage
   const loadRecentArticles = async () => {
     try {
-      const res = await apiFetch('/api/newsarticles/recent')
+      const res = await apiFetch('/api/articles/recent')
       const a = extractArticlesFromResponse(res)
       if (a && a.length > 0) {
         let normalized = a.map(normalizeArticle)
@@ -44,7 +57,6 @@ export default function NewsFetchDashboard() {
         // merge server-provided recent articles into current list, placing server items at top
         setArticles(prev => {
           const merged = mergeNewOnTop(normalized, prev)
-          try { localStorage.setItem('recentArticles', JSON.stringify(merged)) } catch (e) {}
           return merged
         })
         return
@@ -53,14 +65,7 @@ export default function NewsFetchDashboard() {
       // ignore - endpoint may not exist
     }
 
-    // fallback: load from localStorage if available
-    try {
-      const stored = localStorage.getItem('recentArticles')
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (Array.isArray(parsed)) setArticles(parsed)
-      }
-    } catch (e) { /* ignore parse errors */ }
+    // NOTE: removed localStorage fallback per configuration: rely on server-provided recent articles only
   }
 
   const load = async () => {
@@ -100,7 +105,6 @@ export default function NewsFetchDashboard() {
         console.debug('triggerFetch - normalized fetched articles:', normalized)
         setArticles(prev => {
           const merged = mergeNewOnTop(normalized, prev)
-          try { localStorage.setItem('recentArticles', JSON.stringify(merged)) } catch (e) {}
           return merged
         })
         // attempt to reload persisted articles from server (if backend saved them)
@@ -155,7 +159,13 @@ export default function NewsFetchDashboard() {
     }
     for (const n of (Array.isArray(newArticles) ? newArticles : [])) pushIfNew(n)
     for (const e of (Array.isArray(existingArticles) ? existingArticles : [])) pushIfNew(e)
-    return out
+    // Ensure each item exposes NewsArticleId (for UI compatibility)
+    return out.map(it => {
+      const raw = it.raw || {}
+      const rawId = raw.NewsArticleId ?? raw.newsArticleId ?? raw.NewsArticleID ?? raw.newsArticleID ?? null
+      const nid = it.NewsArticleId ?? it.id ?? rawId ?? null
+      return { ...it, NewsArticleId: nid, id: it.id ?? nid }
+    })
   }
 
   // Try to find any URL string inside an object/array (depth-limited, avoids circulars)
@@ -267,7 +277,6 @@ export default function NewsFetchDashboard() {
         console.debug('fetchForSource - normalized fetched articles:', normalized)
         setArticles(prev => {
           const merged = mergeNewOnTop(normalized, prev)
-          try { localStorage.setItem('recentArticles', JSON.stringify(merged)) } catch (e) {}
           return merged
         })
         if (persist) await loadRecentArticles()
@@ -298,6 +307,49 @@ export default function NewsFetchDashboard() {
       const opts = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }
       return d.toLocaleString(undefined, opts)
     } catch (e) { return String(v) }
+  }
+
+  const resolveSourceLabel = (a) => {
+    if (!a) return '-'
+    if (a.sourceName) return a.sourceName
+    // try direct lookup by id
+    if (a.sourceId) {
+      const found = sources.find(s => String(s.SourceId) === String(a.sourceId) || String(s.SourceId) === String(a.sourceId))
+      if (found && found.Name) return found.Name
+    }
+    // try to match by article url hostname -> source.BaseUrl hostname
+    const tryHostnameMatch = (url) => {
+      try {
+        const u = new URL(url, window.location.origin)
+        const host = u.hostname.replace(/^www\./,'')
+        for (const s of sources) {
+          if (!s.BaseUrl) continue
+          try {
+            const bs = new URL(s.BaseUrl, window.location.origin)
+            const bhost = bs.hostname.replace(/^www\./,'')
+            if (bhost && host && (host === bhost || host.endsWith('.' + bhost) || bhost.endsWith('.' + host))) return s.Name
+          } catch (e) { /* ignore invalid baseUrl */ }
+        }
+      } catch (e) { /* ignore invalid url */ }
+      return null
+    }
+
+    if (a.url) {
+      const byUrl = tryHostnameMatch(a.url)
+      if (byUrl) return byUrl
+    }
+    // inspect raw object for any URL and try match
+    if (a.raw) {
+      try {
+        const found = findUrlInObject(a.raw)
+        if (found) {
+          const byRaw = tryHostnameMatch(found)
+          if (byRaw) return byRaw
+        }
+      } catch (e) { /* ignore */ }
+    }
+
+    return 'Unknown source'
   }
 
   const total = sources.length
@@ -457,33 +509,7 @@ export default function NewsFetchDashboard() {
                 </table>
               ) : (
                 (loading) ? <div>Loading...</div> : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
-                        <th style={{ padding: 12 }}>Source</th>
-                        <th style={{ padding: 12 }}>Title Snippet</th>
-                        <th style={{ padding: 12 }}>Fetch Time</th>
-                        <th style={{ padding: 12 }}>Status</th>
-                        <th style={{ padding: 12 }}>Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sources.slice(0,6).map((s, i) => (
-                        <tr key={s.SourceId ?? i} style={{ borderBottom: '1px solid #f2f2f2' }}>
-                          <td style={{ padding: 12 }}>{s.Name}</td>
-                          <td style={{ padding: 12, color: '#666' }}>{s.Description ? (s.Description.length>60 ? s.Description.slice(0,60)+'...' : s.Description) : '-'}</td>
-                          <td style={{ padding: 12 }}>{formatDate(s.LastCrawledAt)}</td>
-                          <td style={{ padding: 12 }}>{Math.random() > 0.8 ? <span style={{ background: '#ffecec', color: '#c43d3d', padding: '4px 8px', borderRadius: 12 }}>Error</span> : <span style={{ background: '#e6ffed', color: '#1e7a3a', padding: '4px 8px', borderRadius: 12 }}>Success</span>}</td>
-                          <td style={{ padding: 12 }}>
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <button onClick={() => fetchForSource(s.SourceId)} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #e6e6e6', background: 'white' }}>Fetch Now</button>
-                              <button onClick={() => fetchForSource(s.SourceId, false)} style={{ padding: '6px 8px', borderRadius: 6, border: '1px solid #e6e6e6', background: 'white' }}>Fetch (no persist)</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div style={{ padding: 18, color: '#666' }}>No recent articles.</div>
                 )
               )}
           </div>

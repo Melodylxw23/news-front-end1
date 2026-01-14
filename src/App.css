@@ -255,6 +255,22 @@ html, body, #root {
   background: linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(0,0,0,0.18) 100%);
   pointer-events: none;
 }
+
+/* Full-page content helper: make page content span the viewport like auth pages */
+.content-full {
+  width: 100%;
+  min-height: 100vh;
+  padding: 0;
+  box-sizing: border-box;
+  background: #fbf8f6; /* page background color */
+  overflow-x: hidden;
+}
+
+.content-full .page-inner {
+  max-width: none; /* allow full-width content */
+  margin: 0; /* align to left edge of wrapper */
+  padding: 0;
+}
 .auth-footer {
   display:flex;justify-content:space-between;align-items:center;margin-top:14px;font-size:13px;color:#999
 }
