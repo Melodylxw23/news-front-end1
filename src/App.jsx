@@ -31,6 +31,7 @@ import SetInitialPassword from './assets/pages/SetInitialPassword'
 import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
 import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
+import MemberProfile from './assets/pages/MemberProfile'
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -69,11 +70,20 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/family-member', label: 'Family Members', icon: '👪' },
       { path: '/claims-management', label: 'Claims', icon: '💼' }
     ],
+    member: [
+      { path: '/landing', label: 'Dashboard', icon: '🏠' },
+      { path: '/member/profile', label: 'My Profile', icon: '👤' }
+    ],
+    consultant: [
+      { path: '/landing', label: 'Dashboard', icon: '🏠' },
+      { path: '/client-list', label: 'Clients', icon: '👥' }
+    ],
     admin: [
+      { path: '/landing', label: 'Dashboard', icon: '🏠' },
       { path: '/admin/users', label: 'User Management', icon: '👥' },
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
-      { path: '/admin/sources', label: 'Source Management', icon: '�️' }
+      { path: '/admin/sources', label: 'Source Management', icon: '🗂️' }
     ],
     advisor: [
       { path: '/dashboard', label: 'Dashboard', icon: '🏠' },
@@ -263,6 +273,7 @@ function AppContent() {
           <Route path={'/select-topics'} element={<SelectTopicsOfInterest />} />
           <Route path={'/notification-preferences'} element={<NotificationPreferences />} />
           <Route path={'/notification-frequency'} element={<NotificationFrequency />} />
+          <Route path={'/member/profile'} element={<MemberProfile />} />
           <Route path={'/landing'} element={<LoginLanding />} />
           <Route path={'/admin/users'} element={<UserManagement />} />
           <Route path={'/admin/categories'} element={<CategoryManagement />} />

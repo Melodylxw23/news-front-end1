@@ -125,7 +125,17 @@ export default function LoginLanding() {
 
                 {role === 'member' && (
                   <Box mt={3} p={3} bg="gray.50" borderRadius="8px" w="100%">
-                    <Text fontWeight={700}>Member access</Text>
+                    <HStack justifyContent="space-between" alignItems="center" mb={2}>
+                      <Text fontWeight={700}>Member access</Text>
+                      <Button
+                        size="sm"
+                        colorScheme="blue"
+                        variant="outline"
+                        onClick={() => navigate('/member/profile')}
+                      >
+                        View Full Profile
+                      </Button>
+                    </HStack>
                     <Text fontSize="sm" color="gray.600" mt={2}>As a member you can:</Text>
                     <ul style={{ marginTop: 8, marginLeft: 18 }}>
                       <li>View your personalized news feed</li>
