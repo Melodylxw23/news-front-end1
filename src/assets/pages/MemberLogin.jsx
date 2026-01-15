@@ -44,6 +44,12 @@ function MemberLogin({ onLoginSuccess }) {
           localStorage.setItem('role', roleFromToken)
           if (nameFromToken) localStorage.setItem('name', nameFromToken)
           if (onLoginSuccess) onLoginSuccess(roleFromToken)
+          
+          // Navigate to member profile for members
+          if (roleFromToken.toLowerCase() === 'member') {
+            navigate('/member/profile')
+            return
+          }
         } else {
           // fallback to /me
           try {
@@ -60,13 +66,23 @@ function MemberLogin({ onLoginSuccess }) {
               localStorage.setItem('role', determined)
               if (me?.Name) localStorage.setItem('name', me.Name)
               if (onLoginSuccess) onLoginSuccess(determined)
+              
+              // Navigate to member profile for members
+              if (determined === 'member') {
+                navigate('/member/profile')
+                return
+              }
             } else {
               localStorage.setItem('role', 'member')
               if (onLoginSuccess) onLoginSuccess('member')
+              navigate('/member/profile')
+              return
             }
           } catch (err) {
             localStorage.setItem('role', 'member')
             if (onLoginSuccess) onLoginSuccess('member')
+            navigate('/member/profile')
+            return
           }
         }
       }

@@ -73,7 +73,7 @@ export default function SetInitialPassword() {
       display: 'flex', 
       alignItems: 'center', 
       justifyContent: 'center',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
+      background: 'linear-gradient(135deg, #c92b2b 0%, #8b1f1f 100%)'
     }}>
       <div style={{
         background: 'white',
@@ -158,7 +158,7 @@ export default function SetInitialPassword() {
             style={{
               width: '100%',
               padding: '14px',
-              background: loading ? '#ccc' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+              background: loading ? '#ccc' : 'linear-gradient(135deg, #c92b2b 0%, #8b1f1f 100%)',
               color: 'white',
               border: 'none',
               borderRadius: 8,

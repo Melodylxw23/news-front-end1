@@ -78,7 +78,6 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/claims-management', label: 'Claims', icon: '💼' }
     ],
     member: [
-      { path: '/landing', label: 'Dashboard', icon: '🏠' },
       { path: '/member/profile', label: 'My Profile', icon: '👤' }
     ],
     consultant: [
@@ -224,9 +223,19 @@ function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [userRole, setUserRole] = useState(localStorage.getItem('role') || 'client');
 
-  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password'];
+  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password', '/set-initial-password'];
   const isAuthPage = authPaths.includes(location.pathname) || location.pathname.startsWith('/reset-password');
   const showSidebar = isLoggedIn && !isAuthPage;
+
+  // Check login status whenever location changes
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const role = localStorage.getItem('role');
+    setIsLoggedIn(!!token);
+    if (role) {
+      setUserRole(role);
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleStorage = () => { setIsLoggedIn(!!localStorage.getItem('token')); setUserRole(localStorage.getItem('role') || 'client'); };
