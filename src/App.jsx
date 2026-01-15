@@ -73,16 +73,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
 
   const navItemsByRole = {
     member: [
-      { path: '/client-profile', label: 'Profile', icon: '👤' },
-      { path: '/family-member', label: 'Family Members', icon: '👪' },
-      { path: '/claims-management', label: 'Claims', icon: '💼' }
-    ],
-    member: [
+      { path: '/landing', label: 'Dashboard', icon: '🏠' },
       { path: '/member/profile', label: 'My Profile', icon: '👤' }
     ],
     consultant: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
-      { path: '/client-list', label: 'Clients', icon: '👥' }
+      { path: '/consultant/articles', label: 'Articles', icon: '📰' },
+      { path: '/consultant/content-creation', label: 'Content Creation', icon: '✨' }
     ],
     admin: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
@@ -90,12 +87,9 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
       { path: '/admin/sources', label: 'Source Management', icon: '🗂️' },
-      { path: '/admin/sources', label: 'Source Management', icon: '�️' },
+      { path: '/admin/industries', label: 'Industry Management', icon: '🏭' },
+      { path: '/admin/interests', label: 'Interest Management', icon: '⭐' },
       { path: '/admin/broadcast', label: 'Broadcast Management', icon: '📢' }
-    ],
-    consultant: [
-      { path: '/consultant/articles', label: 'Articles', icon: '📰'},
-      { path: '/consultant/content-creation', label: 'Content Creation', icon: '✨'},
     ]
   };
 
