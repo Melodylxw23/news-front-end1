@@ -38,6 +38,9 @@ import BroadcastManagement from './assets/pages/BroadcastManagement';
 import DraftsList from './assets/pages/DraftsList';
 import MessageSent from './assets/pages/MessageSent';
 import ContentCreation from './assets/pages/ContentCreation';
+import GenerateTextSummary from './assets/pages/GenerateTextSummary';
+import GeneratePDFPoster from './assets/pages/GeneratePDFPoster';
+import GeneratePPTSlides from './assets/pages/GeneratePPTSlides';
 import { p, path } from 'framer-motion/client';
 
 // Sidebar component (trimmed to use only existing pages)
@@ -91,7 +94,6 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
       { path: '/admin/sources', label: 'Source Management', icon: '🗂️' },
-      { path: '/admin/sources', label: 'Source Management', icon: '�️' },
       { path: '/admin/broadcast', label: 'Broadcast Management', icon: '📢' }
     ],
     consultant: [
@@ -132,8 +134,8 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
         <Flex align="center" justify="center" mb={6} position="relative" mt={2}>
           {!isMobile && (
             <IconButton
-              icon={<Box fontSize="13px" color="whiteAlpha.900">{isCollapsed ? '←' : '→'}</Box>}
-              variant="ghost"
+              icon={<Box fontSize="16px" fontWeight="bold">{isCollapsed ? '→' : '←'}</Box>}
+              variant="unstyled"
               size="sm"
               onClick={onToggle}
               borderRadius="8px"
@@ -141,6 +143,15 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
               top="-10px"
               right={isCollapsed ? '2' : '0'}
               zIndex="2"
+              bg="#d44d52"
+              color="white"
+              display="flex"
+              alignItems="center"
+              justifyContent="center"
+              w="32px"
+              h="32px"
+              _hover={{ bg: '#e05a5f', transform: 'scale(1.1)' }}
+              boxShadow="0 2px 8px rgba(0,0,0,0.15)"
             />
           )}
 
@@ -156,23 +167,41 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
         </Flex>
       </Box>
 
-      <Box flex="1" position="relative">
+      <Box flex="1" position="relative" display="flex" flexDirection="column">
         <Separator borderColor="whiteAlpha.200" animation={isLoaded ? `${slideInRight} 0.8s ease-out 0.4s both` : undefined} />
-        <Box px={isCollapsed ? 2 : 4} py={2} animation={isLoaded ? `${fadeInUp} 0.8s ease-out 0.6s both` : undefined}>
-          {!isCollapsed && <Text fontSize="xs" fontWeight="600" color="whiteAlpha.600" mb={4}>Navigation</Text>}
+        <Box px={isCollapsed ? 2 : 4} py={2} animation={isLoaded ? `${fadeInUp} 0.8s ease-out 0.6s both` : undefined} flex="1">
           <VStack spacing={2} align={isCollapsed ? 'center' : 'stretch'}>
             {navItems.map((item, index) => (
               <Box key={`${item.path}-${animationKey}`} animation={isLoaded && !isCollapsed ? `${slideInFromLeft} 0.4s ease-out ${0.1 + index * 0.08}s both` : undefined} w="100%">
                 <NavButton item={item} index={index} />
               </Box>
             ))}
-            {isLoggedIn && (
-              <Box w="100%" display="flex" justifyContent={isCollapsed ? 'center' : 'stretch'} mt={2}>
-                <Button variant="ghost" size="sm" w={isCollapsed ? '48px' : '100%'} h="48px" onClick={onLogout} color="whiteAlpha.700">{isCollapsed ? <Box>🚪</Box> : 'Logout'}</Button>
-              </Box>
-            )}
           </VStack>
         </Box>
+        
+        {isLoggedIn && (
+          <Box px={isCollapsed ? 2 : 4} pb={6} mt="auto">
+            <Button 
+              variant="unstyled"
+              size="md" 
+              w={isCollapsed ? '48px' : '100%'} 
+              h="48px" 
+              onClick={onLogout}
+              bg="#d44d52"
+              color="white"
+              fontWeight="600"
+              borderRadius="12px"
+              display="flex"
+              alignItems="center"
+              justifyContent="center"
+              _hover={{ bg: '#e05a5f', transform: 'translateY(-2px)' }}
+              boxShadow="0 2px 8px rgba(0,0,0,0.1)"
+              transition="all 0.2s"
+            >
+              {isCollapsed ? <Box>🚪</Box> : 'Logout'}
+            </Button>
+          </Box>
+        )}
       </Box>
     </VStack>
   );
@@ -278,6 +307,9 @@ function AppContent() {
           <Route path={'/consultant/articles'} element={<ArticlesList />} />
           <Route path={'/consultant/articles/:id'} element={<ArticleTranslate />} />
           <Route path={'/consultant/content-creation'} element={<ContentCreation />} />
+          <Route path={'/consultant/generate-summary/:articleId'} element={<GenerateTextSummary />} />
+          <Route path={'/consultant/generate-pdf/:articleId'} element={<GeneratePDFPoster />} />
+          <Route path={'/consultant/generate-ppt/:articleId'} element={<GeneratePPTSlides />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
           <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />
