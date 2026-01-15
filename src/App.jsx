@@ -76,17 +76,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
 
   const navItemsByRole = {
     member: [
-      { path: '/client-profile', label: 'Profile', icon: '👤' },
-      { path: '/family-member', label: 'Family Members', icon: '👪' },
-      { path: '/claims-management', label: 'Claims', icon: '💼' }
-    ],
-    member: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
       { path: '/member/profile', label: 'My Profile', icon: '👤' }
     ],
     consultant: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
-      { path: '/client-list', label: 'Clients', icon: '👥' }
+      { path: '/consultant/articles', label: 'Articles', icon: '📰' },
+      { path: '/consultant/content-creation', label: 'Content Creation', icon: '✨' }
     ],
     admin: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
@@ -94,11 +90,9 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
       { path: '/admin/sources', label: 'Source Management', icon: '🗂️' },
+      { path: '/admin/industries', label: 'Industry Management', icon: '🏭' },
+      { path: '/admin/interests', label: 'Interest Management', icon: '⭐' },
       { path: '/admin/broadcast', label: 'Broadcast Management', icon: '📢' }
-    ],
-    consultant: [
-      { path: '/consultant/articles', label: 'Articles', icon: '📰'},
-      { path: '/consultant/content-creation', label: 'Content Creation', icon: '✨'},
     ]
   };
 
@@ -253,9 +247,19 @@ function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [userRole, setUserRole] = useState(localStorage.getItem('role') || 'client');
 
-  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password'];
+  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password', '/set-initial-password'];
   const isAuthPage = authPaths.includes(location.pathname) || location.pathname.startsWith('/reset-password');
   const showSidebar = isLoggedIn && !isAuthPage;
+
+  // Check login status whenever location changes
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const role = localStorage.getItem('role');
+    setIsLoggedIn(!!token);
+    if (role) {
+      setUserRole(role);
+    }
+  }, [location.pathname]);
 
   useEffect(() => {
     const handleStorage = () => { setIsLoggedIn(!!localStorage.getItem('token')); setUserRole(localStorage.getItem('role') || 'client'); };

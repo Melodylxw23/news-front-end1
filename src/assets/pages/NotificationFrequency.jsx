@@ -91,7 +91,14 @@ export default function NotificationFrequency() {
       })
 
       alert('Notification frequency saved!')
-      navigate('/landing')
+      
+      // Check if user is a member and navigate accordingly
+      const userRole = localStorage.getItem('role')
+      if (userRole === 'member') {
+        navigate('/member/profile')
+      } else {
+        navigate('/landing')
+      }
     } catch (err) {
       console.error('[NotificationFrequency] Error:', err)
       alert('Failed to save frequency: ' + err.message)
