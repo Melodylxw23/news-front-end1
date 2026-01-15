@@ -38,16 +38,110 @@ const BroadcastManagement = () => {
         title: '',
         subject: '',
         body: '',
-        channel: 'Email',
+        channel: ['Email'],
+        targetAudience: [],
         id: null
     });
     const [drafts, setDrafts] = useState([]);
     const [aiPrompt, setAiPrompt] = useState('');
     const [showAiAssistant, setShowAiAssistant] = useState(false);
     const [generatedContent, setGeneratedContent] = useState(null);
+    const [generatedContentId, setGeneratedContentId] = useState(null);
     const [isGenerating, setIsGenerating] = useState(false);
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [scheduledTime, setScheduledTime] = useState('');
+    const [isSavingDraft, setIsSavingDraft] = useState(false);
+
+    // Audience data with counts
+    const audienceData = [
+        { value: 0, label: 'All Members', count: 24589 },
+        { value: 1, label: 'Technology Interested', count: 8920 },
+        { value: 2, label: 'Business Interested', count: 6890 },
+        { value: 3, label: 'Sports Interested', count: 4430 },
+        { value: 4, label: 'Entertainment Interested', count: 2950 },
+        { value: 5, label: 'Politics Interested', count: 1720 }
+    ];
+
+    const normalizeAudience = (raw) => {
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === 'number') {
+            // Decode bitmask back to individual selections
+            if (raw === 0) return [0];
+            const selected = [];
+            if (raw & 2) selected.push(1);  // Technology
+            if (raw & 4) selected.push(2);  // Business
+            if (raw & 8) selected.push(3);  // Sports
+            if (raw & 16) selected.push(4); // Entertainment
+            if (raw & 32) selected.push(5); // Politics
+            console.log('[normalizeAudience] bitmask', raw, '-> selected:', selected);
+            return selected.length ? selected : [0];
+        }
+        if (typeof raw === 'string') {
+            const map = {
+                All: 0, AllMembers: 0, all: 0,
+                TechnologyInterested: 1, Technology: 1, technology: 1,
+                BusinessInterested: 2, Business: 2, business: 2,
+                SportsInterested: 3, Sports: 3, sports: 3,
+                EntertainmentInterested: 4, Entertainment: 4, entertainment: 4,
+                PoliticsInterested: 5, Politics: 5, politics: 5
+            };
+            return [map[raw] ?? 0];
+        }
+        if (raw && typeof raw === 'object') {
+            const flags = {
+                all: raw.AllMembers ?? raw.allMembers ?? raw.all,
+                tech: raw.TechnologyInterested ?? raw.technologyInterested ?? raw.tech,
+                business: raw.BusinessInterested ?? raw.businessInterested,
+                sports: raw.SportsInterested ?? raw.sportsInterested,
+                entertainment: raw.EntertainmentInterested ?? raw.entertainmentInterested,
+                politics: raw.PoliticsInterested ?? raw.politicsInterested
+            };
+            if (flags.all) return [0];
+            const mapped = [];
+            if (flags.tech) mapped.push(1);
+            if (flags.business) mapped.push(2);
+            if (flags.sports) mapped.push(3);
+            if (flags.entertainment) mapped.push(4);
+            if (flags.politics) mapped.push(5);
+            return mapped.length ? mapped : [0];
+        }
+        return [];
+    };
+
+    const toAudienceEnumValue = (selected) => {
+        const chosen = Array.isArray(selected) ? selected : [];
+        if (chosen.length === 0) return 0;
+        if (chosen.includes(0)) return 0;
+        // Use bitwise OR to combine multiple selections: Tech=2, Business=4, Sports=8, Entertainment=16, Politics=32
+        const map = { 1: 2, 2: 4, 3: 8, 4: 16, 5: 32 };
+        let result = 0;
+        chosen.forEach(val => {
+            if (map[val]) result |= map[val];
+        });
+        console.log('[toAudienceEnumValue] selected:', chosen, '-> bitmask:', result);
+        return result || 0;
+    };
+
+    const normalizeDraft = (draft) => ({
+        ...draft,
+        targetAudience: normalizeAudience(draft?.targetAudience ?? draft?.TargetAudience)
+    });
+
+    // Calculate total recipients based on selected audiences
+    const calculateTotalRecipients = (selected) => {
+        if (selected.length === 0) return 0;
+        // If All Members (0) is selected, return total
+        if (selected.includes(0)) {
+            return 24589;
+        }
+        // Otherwise sum the counts of selected audiences
+        return selected.reduce((sum, val) => {
+            const audience = audienceData.find(a => a.value === val);
+            return sum + (audience ? audience.count : 0);
+        }, 0);
+    };
+
+    const totalRecipients = calculateTotalRecipients(formData.targetAudience);
 
     useEffect(() => {
         fetchDrafts();
@@ -59,7 +153,8 @@ const BroadcastManagement = () => {
             console.log('[fetchDrafts] response:', response);
             // Handle both response formats: { data: [...] } or direct array
             const draftsData = response?.data || response || [];
-            setDrafts(Array.isArray(draftsData) ? draftsData : []);
+            const normalizedDrafts = Array.isArray(draftsData) ? draftsData.map(normalizeDraft) : [];
+            setDrafts(normalizedDrafts);
         } catch (error) {
             console.error('[fetchDrafts] error:', error);
             setDrafts([]);
@@ -73,34 +168,78 @@ const BroadcastManagement = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        // Prevent multiple submissions
+        if (isSavingDraft) return;
+        
         try {
+            setIsSavingDraft(true);
             console.log('[handleSubmit] sending:', formData);
             
+            // Validation
+            if (!formData.title?.trim()) {
+                alert('Title is required');
+                setIsSavingDraft(false);
+                return;
+            }
+            if (!formData.subject?.trim()) {
+                alert('Subject is required');
+                setIsSavingDraft(false);
+                return;
+            }
+            if (!formData.body?.trim()) {
+                alert('Message body is required');
+                setIsSavingDraft(false);
+                return;
+            }
+            
+            const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+            const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
+            const channelEnumValue = toChannelEnumValue(selectedChannels);
             const submitData = {
                 Title: formData.title,
                 Subject: formData.subject,
                 Body: formData.body,
-                Channel: formData.channel
+                Channel: channelEnumValue,
+                TargetAudience: toAudienceEnumValue(selectedAudience),
+                ScheduledSendAt: formData.scheduledSendAt || null
             };
-            // Include scheduled send time if set
-            if (formData.scheduledSendAt) {
-                submitData.ScheduledSendAt = formData.scheduledSendAt;
+            console.log('[handleSubmit] selectedChannels array:', selectedChannels);
+            console.log('[handleSubmit] channelEnumValue:', channelEnumValue, '(should be 1 for Email, 2 for WeChat, 3 for both)');
+            console.log('[handleSubmit] payload:', submitData);
+            
+            // If this was generated by AI, update the auto-generated draft instead of creating a new one
+            if (generatedContentId) {
+                console.log('[handleSubmit] Updating auto-generated draft:', generatedContentId);
+                const response = await apiFetch(`/api/Broadcast/${generatedContentId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(submitData)
+                });
+                console.log('[handleSubmit] update response:', response);
+                alert('Draft updated successfully!');
+                setGeneratedContentId(null);
+                setGeneratedContent(null);
+                setFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], id: null, scheduledSendAt: '' });
+            } else {
+                // Create a new draft
+                const response = await apiFetch('/api/Broadcast', {
+                    method: 'POST',
+                    body: JSON.stringify(submitData)
+                });
+
+                console.log('[handleSubmit] response:', response);
+                alert('Draft saved successfully!');
+                // Capture the draft ID from response
+                const draftId = response?.id || response?.Id;
+                setFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], id: draftId, scheduledSendAt: '' });
             }
             
-            const response = await apiFetch('/api/Broadcast', {
-                method: 'POST',
-                body: JSON.stringify(submitData)
-            });
-            
-            console.log('[handleSubmit] response:', response);
-            alert('Draft saved successfully!');
-            // Capture the draft ID from response
-            const draftId = response?.id || response?.Id;
-            setFormData({ title: '', subject: '', body: '', channel: 'Email', id: draftId, scheduledSendAt: '' });
             fetchDrafts();
         } catch (error) {
             console.error('[handleSubmit] error:', error);
             alert('Failed to save draft: ' + error.message + '\n\nPlease check the browser console and verify your backend endpoint.');
+        } finally {
+            setIsSavingDraft(false);
         }
     };
 
@@ -111,12 +250,25 @@ const BroadcastManagement = () => {
     };
 
     const handleSendBroadcast = async () => {
-        if (!formData.subject || !formData.body) {
-            alert('Please fill in the subject and message body before sending.');
+        if (!formData.title?.trim() || !formData.subject?.trim() || !formData.body?.trim()) {
+            alert('Cannot send: Title, Subject, and Message Body are all required.');
             return;
         }
-        
-        if (!window.confirm(`Send "${formData.subject}" broadcast now?`)) return;
+
+        // Build audience description
+        const audiences = normalizeAudience(formData.targetAudience);
+        let audienceDesc = 'All Members';
+        if (audiences.includes(0)) {
+            audienceDesc = 'All Members';
+        } else if (audiences.length > 0) {
+            audienceDesc = audiences.map(getAudienceLabel).join(', ');
+        }
+
+        // Build channel description
+        const channels = normalizeChannels(formData.channel);
+        const channelDesc = channels.length === 1 ? channels[0] : channels.join(', ');
+
+        if (!window.confirm(`Send "${formData.subject}" to ${audienceDesc} via ${channelDesc} now?`)) return;
         
         // Simply navigate to the dummy success page
         navigate('/message-sent', { state: { broadcastSubject: formData.subject } });
@@ -163,11 +315,13 @@ const BroadcastManagement = () => {
             console.log('[handleAiPromptSubmit] response:', response);
 
             if (response) {
+                // Store the auto-generated ID so we can update it instead of creating a new one
+                setGeneratedContentId(response.id || response.Id);
                 setGeneratedContent({
                     title: response.title || response.Title || '',
                     subject: response.subject || response.Subject || '',
                     body: response.body || response.Body || response.message || response.Message || response.content || '',
-                    channel: response.channel || response.Channel || formData.channel
+                    channel: normalizeChannels(response.channel || response.Channel || formData.channel)
                 });
             }
 
@@ -182,10 +336,15 @@ const BroadcastManagement = () => {
 
     const applyGeneratedContent = () => {
         if (generatedContent) {
+            // Apply only title, subject, body from AI - DO NOT override user's channel selection
             setFormData({
                 ...formData,
-                ...generatedContent
+                title: generatedContent.title || '',
+                subject: generatedContent.subject || '',
+                body: generatedContent.body || ''
+                // Preserve the user's channel selection, don't override with AI's channel
             });
+            // Keep the generatedContentId so we know to update instead of create on save
             setGeneratedContent(null);
             setShowAiAssistant(false);
         }
@@ -251,44 +410,70 @@ const BroadcastManagement = () => {
                     <div style={{ background: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', marginBottom: '24px' }}>
                         <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: '#333' }}>Select Channels</h3>
                         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                            <div
-                                onClick={() => setFormData({ ...formData, channel: 'Email' })}
-                                style={{
-                                    flex: '1',
-                                    minWidth: '200px',
-                                    padding: '16px',
-                                    border: formData.channel === 'Email' ? '2px solid #dc2626' : '2px solid #e5e7eb',
-                                    borderRadius: '8px',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s',
-                                    background: formData.channel === 'Email' ? '#fef2f2' : 'white'
-                                }}
-                            >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                    <span style={{ fontSize: '20px' }}>📧</span>
-                                    <span style={{ fontWeight: '600', fontSize: '15px' }}>Email</span>
-                                </div>
-                                <div style={{ fontSize: '13px', color: '#666' }}>6,449 subscribers</div>
-                            </div>
-                            <div
-                                onClick={() => setFormData({ ...formData, channel: 'SMS' })}
-                                style={{
-                                    flex: '1',
-                                    minWidth: '200px',
-                                    padding: '16px',
-                                    border: formData.channel === 'SMS' ? '2px solid #dc2626' : '2px solid #e5e7eb',
-                                    borderRadius: '8px',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s',
-                                    background: formData.channel === 'SMS' ? '#fef2f2' : 'white'
-                                }}
-                            >
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                    <span style={{ fontSize: '20px' }}>💬</span>
-                                    <span style={{ fontWeight: '600', fontSize: '15px' }}>WeChat</span>
-                                </div>
-                                <div style={{ fontSize: '13px', color: '#666' }}>16,189 subscribers</div>
-                            </div>
+                            {['Email', 'WeChat'].map((ch) => {
+                                const isSelected = Array.isArray(formData.channel) ? formData.channel.includes(ch) : formData.channel === ch;
+                                return (
+                                    <div
+                                        key={ch}
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => {
+                                            const current = Array.isArray(formData.channel) ? formData.channel : [formData.channel].filter(Boolean);
+                                            const exists = current.includes(ch);
+                                            let next = exists ? current.filter((c) => c !== ch) : [...current, ch];
+                                            if (next.length === 0) next = ['Email'];
+                                            console.log('[Channel Toggle] channel:', ch, 'exists:', exists, 'current:', current, 'next:', next);
+                                            setFormData({ ...formData, channel: next });
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' || e.key === ' ') {
+                                                e.preventDefault();
+                                                const current = Array.isArray(formData.channel) ? formData.channel : [formData.channel].filter(Boolean);
+                                                const exists = current.includes(ch);
+                                                let next = exists ? current.filter((c) => c !== ch) : [...current, ch];
+                                                if (next.length === 0) next = ['Email'];
+                                                setFormData({ ...formData, channel: next });
+                                            }
+                                        }}
+                                        style={{
+                                            flex: '1',
+                                            minWidth: '200px',
+                                            padding: '16px',
+                                            border: isSelected ? '2px solid #dc2626' : '2px solid #e5e7eb',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            background: isSelected ? '#fef2f2' : 'white',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '12px'
+                                        }}
+                                    >
+                                        <div style={{
+                                            width: '22px',
+                                            height: '22px',
+                                            borderRadius: '6px',
+                                            border: isSelected ? '2px solid #dc2626' : '2px solid #e5e7eb',
+                                            background: isSelected ? '#dc2626' : 'white',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            color: isSelected ? 'white' : 'transparent',
+                                            fontSize: '14px',
+                                            transition: 'all 0.2s'
+                                        }}>
+                                            ✓
+                                        </div>
+                                        <div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                                <span style={{ fontSize: '20px' }}>{ch === 'Email' ? '📧' : '💬'}</span>
+                                                <span style={{ fontWeight: '600', fontSize: '15px' }}>{ch === 'Email' ? 'Email' : 'WeChat'}</span>
+                                            </div>
+                                            <div style={{ fontSize: '13px', color: '#666' }}>{ch === 'Email' ? '6,449 subscribers' : '16,189 subscribers'}</div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -511,33 +696,102 @@ const BroadcastManagement = () => {
                             <h3 style={{ fontSize: '15px', fontWeight: '600', margin: 0 }}>Target Audience</h3>
                         </div>
                         <div style={{ fontSize: '13px', color: '#666' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                <span>All Members</span>
-                                <span style={{ fontWeight: '600', color: '#333' }}>24,589</span>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                                {audienceData.map((audience) => {
+                                    const isSelected = formData.targetAudience.includes(audience.value);
+                                    return (
+                                        <div
+                                            key={audience.value}
+                                            role="button"
+                                            tabIndex={0}
+                                            onClick={() => {
+                                                const checked = !isSelected;
+                                                if (checked) {
+                                                    if (audience.value === 0) {
+                                                        setFormData({ ...formData, targetAudience: [0] });
+                                                    } else {
+                                                        const newSelection = formData.targetAudience.includes(0)
+                                                            ? [audience.value]
+                                                            : [...formData.targetAudience, audience.value];
+                                                        setFormData({ ...formData, targetAudience: newSelection });
+                                                    }
+                                                } else {
+                                                    setFormData({
+                                                        ...formData,
+                                                        targetAudience: formData.targetAudience.filter(v => v !== audience.value)
+                                                    });
+                                                }
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    const checked = !isSelected;
+                                                    if (checked) {
+                                                        if (audience.value === 0) {
+                                                            setFormData({ ...formData, targetAudience: [0] });
+                                                        } else {
+                                                            const newSelection = formData.targetAudience.includes(0)
+                                                                ? [audience.value]
+                                                                : [...formData.targetAudience, audience.value];
+                                                            setFormData({ ...formData, targetAudience: newSelection });
+                                                        }
+                                                    } else {
+                                                        setFormData({
+                                                            ...formData,
+                                                            targetAudience: formData.targetAudience.filter(v => v !== audience.value)
+                                                        });
+                                                    }
+                                                }
+                                            }}
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '10px',
+                                                padding: '10px',
+                                                cursor: 'pointer',
+                                                borderRadius: '6px',
+                                                background: isSelected ? '#fef2f2' : 'transparent',
+                                                border: '1px solid ' + (isSelected ? '#fecaca' : 'transparent'),
+                                                transition: 'all 0.2s'
+                                            }}
+                                            onMouseEnter={(e) => {
+                                                if (!isSelected) e.currentTarget.style.background = '#f9fafb';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                if (!isSelected) e.currentTarget.style.background = 'transparent';
+                                                e.currentTarget.style.borderColor = 'transparent';
+                                            }}
+                                        >
+                                            <div style={{
+                                                width: '22px',
+                                                height: '22px',
+                                                borderRadius: '6px',
+                                                border: isSelected ? '2px solid #dc2626' : '2px solid #e5e7eb',
+                                                background: isSelected ? '#dc2626' : 'white',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'center',
+                                                color: isSelected ? 'white' : 'transparent',
+                                                fontSize: '14px',
+                                                transition: 'all 0.2s'
+                                            }}>
+                                                ✓
+                                            </div>
+                                            <div style={{ flex: 1 }}>
+                                                <div style={{ fontWeight: isSelected ? '600' : '500', color: isSelected ? '#dc2626' : '#333' }}>
+                                                    {audience.label}
+                                                </div>
+                                                <div style={{ fontSize: '12px', color: '#999' }}>
+                                                    {audience.count.toLocaleString()} subscribers
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                <span>Technology Interested</span>
-                                <span style={{ fontWeight: '600', color: '#333' }}>8,920</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                <span>Business Interested</span>
-                                <span style={{ fontWeight: '600', color: '#333' }}>6,890</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                <span>Sports Interested</span>
-                                <span style={{ fontWeight: '600', color: '#333' }}>4,430</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                <span>Entertainment Interested</span>
-                                <span style={{ fontWeight: '600', color: '#333' }}>2,950</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
-                                <span>Politics Interested</span>
-                                <span style={{ fontWeight: '600', color: '#333' }}>1,720</span>
-                            </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0 0 0', marginTop: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: '#f9fafb', borderRadius: '6px', borderTop: '1px solid #e5e7eb' }}>
                                 <span style={{ fontWeight: '600', color: '#333' }}>Total Recipients</span>
-                                <span style={{ fontWeight: '700', color: '#dc2626' }}>24,589</span>
+                                <span style={{ fontWeight: '700', color: '#dc2626' }}>{totalRecipients.toLocaleString()}</span>
                             </div>
                         </div>
                     </div>
@@ -615,23 +869,34 @@ const BroadcastManagement = () => {
                         </button>
                         <button
                             onClick={handleSubmit}
+                            disabled={isSavingDraft}
                             style={{
                                 width: '100%',
                                 padding: '12px',
-                                background: 'white',
-                                color: '#333',
+                                background: isSavingDraft ? '#d1d5db' : 'white',
+                                color: isSavingDraft ? '#9ca3af' : '#333',
                                 border: '1px solid #e5e7eb',
                                 borderRadius: '6px',
-                                cursor: 'pointer',
+                                cursor: isSavingDraft ? 'not-allowed' : 'pointer',
                                 fontSize: '14px',
                                 fontWeight: '500',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                gap: '8px'
+                                gap: '8px',
+                                opacity: isSavingDraft ? 0.6 : 1
                             }}
                         >
-                            <span>💾</span> Save Draft
+                            {isSavingDraft ? (
+                                <>
+                                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⏳</span>
+                                    Saving...
+                                </>
+                            ) : (
+                                <>
+                                    <span>💾</span> Save Draft
+                                </>
+                            )}
                         </button>
                     </div>
 
@@ -763,6 +1028,49 @@ const BroadcastManagement = () => {
             )}
         </div>
     );
+};
+
+// Normalize channels to an array (supports single string, comma-separated string, or array)
+const normalizeChannels = (raw) => {
+    const normalizeVal = (v) => {
+        if (!v) return null;
+        const val = v.trim();
+        if (val.toLowerCase() === 'sms') return 'WeChat';
+        return val;
+    };
+
+    if (Array.isArray(raw)) return raw.map(normalizeVal).filter(Boolean);
+    if (typeof raw === 'string') {
+        const parts = raw.split(',').map((p) => normalizeVal(p)).filter(Boolean);
+        if (parts.length > 0) return parts;
+    }
+    return ['Email'];
+};
+
+// Encode channels for backend (comma-separated string if multiple)
+// Use comma without space to avoid backend parsing issues.
+const toChannelPayload = (channels) => {
+    const mapVal = (v) => {
+        if (!v) return null;
+        return v === 'SMS' ? 'WeChat' : v;
+    };
+    const arr = Array.isArray(channels) ? channels.map(mapVal).filter(Boolean) : [mapVal(channels)].filter(Boolean);
+    if (arr.length === 0) return 'Email';
+    if (arr.length === 1) return arr[0];
+    return arr.join(',');
+};
+
+// Convert channel names to enum value for backend
+// Backend expects: Email=1, WeChat=2, Both=3 (Email+WeChat)
+const toChannelEnumValue = (channels) => {
+    const arr = Array.isArray(channels) ? channels : [channels].filter(Boolean);
+    if (arr.length === 0) return 1; // Default to Email
+    
+    let value = 0;
+    if (arr.includes('Email')) value |= 1;
+    if (arr.includes('WeChat')) value |= 2;
+    
+    return value || 1; // Default to Email if nothing selected
 };
 
 export default BroadcastManagement;
