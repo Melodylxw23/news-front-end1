@@ -25,6 +25,7 @@ export default ({ mode }) => {
     server: {
       port: 3000,
       proxy: {
+        // existing backend API proxy
         '/api': {
           target: env.VITE_API_BASE_URL || 'https://localhost:7191',
           changeOrigin: true,

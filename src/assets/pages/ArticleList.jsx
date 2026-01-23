@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { listArticles, stats, deleteArticle } from '../../api/articles'
+import React, { Component, useEffect, useState } from 'react'
+import { listArticles, stats, deleteArticle, publishArticles } from '../../api/articles'
 import { Link, useNavigate } from 'react-router-dom'
 import { getRoleFromToken, parseJwt } from '../../utils/auth'
 import { text } from 'framer-motion/client'
@@ -29,7 +29,7 @@ const styles = {
   actionsCell: { padding: 8 }
 }
 
-export default function ArticlesList() {
+function ArticlesListInner() {
   const [page, setPage] = useState(1)
   const [pageSize] = useState(5)
   const [items, setItems] = useState([])
@@ -40,29 +40,21 @@ export default function ArticlesList() {
   const [sourcesMap, setSourcesMap] = useState({})
   const [globalCounts, setGlobalCounts] = useState(null)
   const [initialized, setInitialized] = useState(false)
-  const [activeTab, setActiveTab] = useState('active') // 'active' or 'translated'
   const [query, setQuery] = useState('')
-  const [sortBy, setSortBy] = useState('default') // default | pendingOnly | inProgressOnly | pendingFirst | inProgressFirst
+  const [selectedIds, setSelectedIds] = useState([])
+  // Always show translated articles only
+  const activeTab = 'translated'
   const [showDebug, setShowDebug] = useState(false)
   const [pageJump, setPageJump] = useState('')
 
-  useEffect(() => { if (initialized) loadPage(page) }, [page, initialized, activeTab, sortBy])
+  useEffect(() => { if (initialized) loadPage(page) }, [page, initialized])
   // reload when other pages signal that articles changed (save/approve)
   useEffect(() => {
     const handler = () => { if (initialized) loadPage(page) }
     window.addEventListener('articles:changed', handler)
     return () => window.removeEventListener('articles:changed', handler)
-  }, [page, initialized, activeTab, sortBy])
-  // reset to page 1 when switching tabs
-  useEffect(() => {
-    setPage(1)
-  }, [activeTab])
-  // reset to page 1 when using status-only filters
-  useEffect(() => {
-    if ((sortBy === 'pendingOnly' || sortBy === 'inProgressOnly') && page !== 1) {
-      setPage(1)
-    }
-  }, [sortBy])
+  }, [page, initialized])
+  // always show translated articles; no tab switching or status filters
   useEffect(() => {
     (async () => {
       try {
@@ -72,7 +64,7 @@ export default function ArticlesList() {
         await loadSources()
       } catch (e) { /* ignore */ }
       setInitialized(true)
-      // load first page now that global stats are available
+      // load first page (translated only)
       try { await loadPage(page) } catch (e) { /* ignore */ }
     })()
   }, [])
@@ -86,17 +78,8 @@ export default function ArticlesList() {
       if (!sourcesMap || Object.keys(sourcesMap).length === 0) {
         try { await loadSources() } catch (e) { /* ignore - we'll still attempt to show items */ }
       }
-      // Determine status filter based on active tab and sortBy
-      let statusFilter = null
-      if (activeTab === 'translated') {
-        statusFilter = 'translated'
-      } else if (activeTab === 'active') {
-        if (sortBy === 'pendingOnly') statusFilter = 'pending'
-        else if (sortBy === 'inProgressOnly') statusFilter = 'inProgress'
-        // For 'default', 'pendingFirst', 'inProgressFirst', don't filter by status on backend
-        // Backend should return both pending and inProgress when status is null or 'active'
-      }
-      const res = await listArticles(pageToLoad, pageSize, statusFilter)
+      // Request translated articles only
+      const res = await listArticles(pageToLoad, pageSize, 'translated')
       // Normalize multiple possible response shapes
       const itemsPage = Array.isArray(res)
         ? res
@@ -113,12 +96,35 @@ export default function ArticlesList() {
       // Use only server-provided articles. Client-side `recentArticles` merge
       // was removed to ensure the UI strictly reflects database state.
       let merged = [...itemsPage]
+      // normalize title fields: prefer Chinese `TitleZH`/`titleZh`, check nested `Article` objects,
+      // then fall back to English/title/snippet/summary/fullContent variants.
+      const normalizeTitle = (it) => {
+        if (!it) return ''
+        const firstString = (v) => (v === null || typeof v === 'undefined') ? null : (typeof v === 'string' ? v : String(v))
+        const candidates = [
+          // nested article objects (various casings)
+          it.Article && (it.Article.TitleZH ?? it.Article.titleZH ?? it.Article.titleZh),
+          it.article && (it.article.TitleZH ?? it.article.titleZH ?? it.article.titleZh),
+          // direct fields (preferred Chinese)
+          it.TitleZH, it.titleZH, it.titleZh, it.TitleZh,
+          // english fallbacks
+          it.TitleEN, it.titleEN, it.Title, it.title, it.headline, it.Headline,
+          // snippets and summaries
+          it.TitleSnippet, it.titleSnippet, it.Snippet, it.snippet, it.Summary, it.summary,
+          // content fallbacks
+          it.fullContentZH, it.fullContentZh, it.fullContent, it.fullContentEN,
+          it.summaryZH, it.summaryZh, it.summaryEN
+        ].map(firstString).filter(Boolean)
+        return (candidates.length > 0 ? candidates[0].trim() : '')
+      }
+
+      const normalized = merged.map(it => ({ ...it, title: normalizeTitle(it) }))
 
       // Don't filter out articles - show all articles from server
       // Source label resolution will fall back to extracting from title if needed
-      console.log(`Page ${pageToLoad}: Loaded ${merged.length} articles from server`)
+      console.log(`Page ${pageToLoad}: Loaded ${normalized.length} articles from server`)
 
-      setItems(merged)
+      setItems(normalized)
       setTotal(Number(totalCount) || 0)
       // global stats are loaded once on mount; do not refresh here to avoid
       // changing stat cards when navigating pages.
@@ -149,6 +155,82 @@ export default function ArticlesList() {
     const candidates = [a.SourceName, a.sourceName, a.Source?.Name, a.Source?.name]
     for (const c of candidates) if (c) return c
     return '-'
+  }
+
+  const getArticleId = (a) => a.NewsArticleId ?? a.newsArticleId ?? a.id ?? a.ArticleId ?? a.articleId ?? null
+
+  const toggleSelect = (id) => {
+    if (!id) return
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  // Consider translated only when approved or explicitly marked translated/approved
+  const isTranslated = (it) => {
+    const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
+    const approved = it.TranslationApprovedAt ?? it.translationApprovedAt ?? null
+    if (approved) return true
+    if (s.includes('approved')) return true
+    if (s.includes('translated')) return true
+    return false
+  }
+
+  const isAllSelected = (() => {
+    if (!Array.isArray(items) || items.length === 0) return false
+    // compute visible ids from current items (same filtering as `filtered` below)
+    const visibleIds = items
+      .filter(it => {
+        if (activeTab === 'active' && isTranslated(it)) return false
+        if (activeTab === 'translated' && !isTranslated(it)) return false
+        if (query) {
+          const q = query.toLowerCase()
+          const title = (it.title || '').toString().toLowerCase()
+          const src = (getSourceLabel(it) || '').toString().toLowerCase()
+          return title.includes(q) || src.includes(q)
+        }
+        return true
+      })
+      .map(it => getArticleId(it)).filter(Boolean)
+    if (visibleIds.length === 0) return false
+    return visibleIds.every(id => selectedIds.includes(id))
+  })()
+
+  const toggleSelectAll = () => {
+    const visibleIds = items
+      .filter(it => {
+        if (activeTab === 'active' && isTranslated(it)) return false
+        if (activeTab === 'translated' && !isTranslated(it)) return false
+        if (query) {
+          const q = query.toLowerCase()
+          const title = (it.title || '').toString().toLowerCase()
+          const src = (getSourceLabel(it) || '').toString().toLowerCase()
+          return title.includes(q) || src.includes(q)
+        }
+        return true
+      })
+      .map(it => getArticleId(it)).filter(Boolean)
+    if (visibleIds.length === 0) return
+    if (visibleIds.every(id => selectedIds.includes(id))) {
+      // unselect visible
+      setSelectedIds(prev => prev.filter(id => !visibleIds.includes(id)))
+    } else {
+      // add visible ids
+      setSelectedIds(prev => Array.from(new Set([...prev, ...visibleIds])))
+    }
+  }
+
+  const publishSelected = async () => {
+    if (!selectedIds || selectedIds.length === 0) { alert('No articles selected'); return }
+    if (!window.confirm(`Publish ${selectedIds.length} selected article(s)?`)) return
+    try {
+      setLoading(true)
+      await publishArticles(selectedIds)
+      showToast('Publish request sent', 'success')
+      setSelectedIds([])
+      try { await loadPage(page) } catch (e) { /* ignore */ }
+      window.dispatchEvent(new Event('articles:changed'))
+    } catch (err) {
+      showToast('Publish failed: ' + (err.message || err), 'error')
+    } finally { setLoading(false) }
   }
 
   const showToast = (message, type = 'success') => {
@@ -198,7 +280,7 @@ export default function ArticlesList() {
   }
 
   const getTitleLabel = (a) => {
-    const rawTitle = a.Title ?? a.title ?? a.snippet ?? ''
+    const rawTitle = a.title ?? a.TitleZH ?? a.titleZh ?? a.Title ?? a.snippet ?? ''
     const extracted = extractSourceFromTitle(rawTitle)
     if (!extracted) return rawTitle
     // remove the trailing separator+source from title
@@ -218,18 +300,6 @@ export default function ArticlesList() {
   const canDelete = role === 'admin' || role === 'consultant'
 
   // status counts: `total` is overall total from server; other counts are computed from current page
-  const isTranslated = (it) => {
-    const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
-    const approved = it.TranslationApprovedAt ?? it.translationApprovedAt ?? null
-
-    // Consider translated only when approved or explicitly marked translated/approved
-    if (approved) return true
-    if (s.includes('approved')) return true
-    if (s.includes('translated')) return true
-
-    // Pending / In Progress are not translated
-    return false
-  }
 
   const pageCounts = items.reduce((acc, it) => {
     const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
@@ -284,48 +354,19 @@ export default function ArticlesList() {
   // duplicated items across pages when sizes differ.
   const viewPageSize = pageSize
   
-  // Adjust total count based on active filter AND active tab
-  let effectiveTotal = total
-  if (sortBy === 'pendingOnly') {
-    effectiveTotal = displayCounts.pending
-  } else if (sortBy === 'inProgressOnly') {
-    effectiveTotal = displayCounts.inProgress
-  } else {
-    // When no status filter is selected, use tab-appropriate totals
-    if (activeTab === 'active') {
-      // Active tab excludes translated articles
-      effectiveTotal = displayCounts.pending + displayCounts.inProgress
-    } else if (activeTab === 'translated') {
-      // Translated tab shows only translated articles
-      effectiveTotal = displayCounts.translated
-    }
-    // else use total for any other tab
-  }
-  const totalPages = Math.max(1, Math.ceil((effectiveTotal || 0) / viewPageSize))
+  // We only show translated articles; use translated count for pagination total if available
+  const effectiveTotal = Number(displayCounts.translated ?? total ?? 0) || 0
+  const totalPages = Math.max(1, Math.ceil(effectiveTotal / viewPageSize))
 
-  const getStatusCategory = (it) => {
-    const s = (it.TranslationStatus || it.translationStatus || '').toString().toLowerCase()
-    if (s.includes('inprogress') || s.includes('in progress')) return 'inProgress'
-    if (isTranslated(it)) return 'translated'
-    return 'pending'
-  }
-
-  // Apply status-only filters BEFORE tab filtering so they work independently
-  let statusFiltered = items.slice()
-  if (sortBy === 'pendingOnly') {
-    statusFiltered = statusFiltered.filter(it => getStatusCategory(it) === 'pending')
-  } else if (sortBy === 'inProgressOnly') {
-    statusFiltered = statusFiltered.filter(it => getStatusCategory(it) === 'inProgress')
-  }
-
-  const filtered = statusFiltered.filter(it => {
+  // Filter items: include only translated articles and apply search
+  const filtered = items.filter(it => {
     // active: exclude translated items
     if (activeTab === 'active' && isTranslated(it)) return false
     // translated: include only translated items (saved or explicitly translated/approved)
     if (activeTab === 'translated' && !isTranslated(it)) return false
     if (query) {
       const q = query.toLowerCase()
-      const title = (it.Title || it.title || it.title || '').toString().toLowerCase()
+      const title = (it.title || '').toString().toLowerCase()
       const src = (getSourceLabel(it) || '').toString().toLowerCase()
       return title.includes(q) || src.includes(q)
     }
@@ -334,31 +375,7 @@ export default function ArticlesList() {
 
   console.log(`Active tab: ${activeTab}, Items: ${items.length}, Filtered: ${filtered.length}`)
 
-  const sorted = (() => {
-    const arr = filtered.slice()
-
-    // "First" sorts: prioritize status but show all (status-only filters already applied above)
-    if (sortBy === 'pendingFirst') {
-      return arr.sort((a, b) => {
-        const aCat = getStatusCategory(a)
-        const bCat = getStatusCategory(b)
-        if (aCat === 'pending' && bCat !== 'pending') return -1
-        if (aCat !== 'pending' && bCat === 'pending') return 1
-        return 0
-      })
-    }
-    if (sortBy === 'inProgressFirst') {
-      return arr.sort((a, b) => {
-        const aCat = getStatusCategory(a)
-        const bCat = getStatusCategory(b)
-        if (aCat === 'inProgress' && bCat !== 'inProgress') return -1
-        if (aCat !== 'inProgress' && bCat === 'inProgress') return 1
-        return 0
-      })
-    }
-
-    return arr
-  })()
+  const sorted = filtered.slice()
 
   return (
     <div className="content-full">
@@ -370,30 +387,6 @@ export default function ArticlesList() {
           </div>
 
           <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
-            <div style={styles.statCard}>
-              <div style={{ color: palette.muted, fontSize: 13, fontWeight: 600 }}>Total Articles</div>
-              <div style={{ fontSize: 36, fontWeight: 700, marginTop: 6, color: '#7a7a7a' }}>{displayCounts.total}</div>
-              <div style={{ color: '#999', fontSize: 12, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 18 }}>📄</span>
-                All articles in workspace
-              </div>
-            </div>
-            <div style={styles.statCard}>
-              <div style={{ color: palette.primary, fontSize: 13, fontWeight: 700 }}>Pending Translation</div>
-              <div style={{ fontSize: 36, fontWeight: 700, marginTop: 6, color: palette.primary }}>{displayCounts.pending}</div>
-              <div style={{ color: '#999', fontSize: 12, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 18 }}>⏳</span>
-                To be translated
-              </div>
-            </div>
-            <div style={styles.statCard}>
-              <div style={{ color: palette.accent, fontSize: 13, fontWeight: 700 }}>In Progress</div>
-              <div style={{ fontSize: 36, fontWeight: 700, marginTop: 6, color: palette.accent }}>{displayCounts.inProgress}</div>
-              <div style={{ color: '#999', fontSize: 12, marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ fontSize: 18 }}>▶️</span>
-                Actively translating
-              </div>
-            </div>
             <div style={styles.statCard}>
               <div style={{ color: palette.success, fontSize: 13, fontWeight: 700 }}>Translated</div>
               <div style={{ fontSize: 36, fontWeight: 700, marginTop: 6, color: palette.success }}>{displayCounts.translated}</div>
@@ -407,26 +400,26 @@ export default function ArticlesList() {
           <div>
             <div style={styles.tableCard}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'flex', gap: 0, alignItems: 'center', borderBottom: '2px solid #e8e8e8' }}>
-                  <button onClick={() => setActiveTab('active')} style={{ padding: '10px 16px', borderRadius: 0, background: 'transparent', border: 'none', borderBottom: activeTab === 'active' ? '3px solid #333' : '3px solid transparent', fontWeight: activeTab === 'active' ? 600 : 400, color: activeTab === 'active' ? '#333' : '#999', cursor: 'pointer' }}>Active Articles</button>
-                  <button onClick={() => setActiveTab('translated')} style={{ padding: '10px 16px', borderRadius: 0, background: 'transparent', border: 'none', borderBottom: activeTab === 'translated' ? '3px solid #333' : '3px solid transparent', fontWeight: activeTab === 'translated' ? 600 : 400, color: activeTab === 'translated' ? '#333' : '#999', cursor: 'pointer' }}>Translated Articles</button>
+                <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
+                  <div style={{ fontWeight: 700, fontSize: 18 }}>Translated Articles</div>
                 </div>
 
                 <div style={{ ...styles.controls, marginLeft: 'auto' }}>
+                  <button
+                    onClick={publishSelected}
+                    disabled={selectedIds.length === 0}
+                    style={{ marginRight: 8, background: selectedIds.length === 0 ? '#f3f3f3' : '#1e73d1', color: selectedIds.length === 0 ? '#999' : 'white', padding: '8px 12px', borderRadius: 8, border: 'none', cursor: selectedIds.length === 0 ? 'default' : 'pointer', fontWeight: 700 }}
+                  >Publish Selected</button>
                   <input placeholder="🔍 Search" value={query} onChange={e => setQuery(e.target.value)} style={styles.input} />
-                  <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...styles.select, background: '#f5f5f5', padding: '8px 12px', cursor: 'pointer' }}>
-                    <option value="default">Filter By ▼</option>
-                    <option value="pendingOnly">Pending Only</option>
-                    <option value="inProgressOnly">In Progress Only</option>
-                    <option value="pendingFirst">Pending First</option>
-                    <option value="inProgressFirst">In Progress First</option>
-                  </select>
                 </div>
               </div>
 
               <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 16 }}>
                 <thead>
                   <tr style={{ textAlign: 'left', borderBottom: '1px solid #e8e8e8', background: 'transparent' }}>
+                    <th style={{ padding: '12px 8px', width: '4%', fontSize: 12 }}>
+                      <input type="checkbox" checked={isAllSelected} onChange={toggleSelectAll} />
+                    </th>
                     <th style={{ padding: '12px 8px', width: '15%', fontSize: 12, fontWeight: 600, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Source</th>
                     <th style={{ padding: '12px 8px', width: '35%', fontSize: 12, fontWeight: 600, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Article Title</th>
                     <th style={{ padding: '12px 8px', width: '15%', fontSize: 12, fontWeight: 600, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Date Published</th>
@@ -435,45 +428,51 @@ export default function ArticlesList() {
                   </tr>
                 </thead>
                   <tbody>
-                    {sorted.map((a, i) => (
-                      <tr key={a.NewsArticleId ?? a.newsArticleId ?? a.ArticleId ?? a.articleId ?? a.id ?? i} style={{ borderBottom: '1px solid #f2f2f2', transition: 'background 150ms', cursor: 'default' }} onMouseEnter={e => e.currentTarget.style.background = '#fbfcff'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                        <td style={styles.sourceCell}>{getSourceLabel(a) === '-' ? (extractSourceFromTitle(a.Title ?? a.title ?? a.snippet) || getSourceLabel(a)) : getSourceLabel(a)}</td>
-                        <td style={styles.titleCell}>{getTitleLabel(a) || (a.Title ?? a.title ?? '-')}</td>
-                        <td style={styles.dateCell}>{(a.PublishedAt || a.publishedAt || a.fetchedAt || a.crawledAt) ? new Date(a.PublishedAt || a.publishedAt || a.fetchedAt || a.crawledAt).toLocaleDateString() : '-'}</td>
-                        <td style={styles.statusCell}>{renderBadge(a)}</td>
-                        <td style={styles.actionsCell}>
-                          <div style={{ display: 'flex', gap: 8 }}>
-                            <button
-                              style={{ ...styles.translateBtn, padding: '6px 8px', fontSize: 13 }}
-                              onClick={() => {
-                                const nid = a.NewsArticleId ?? a.newsArticleId ?? a.id ?? a.ArticleId ?? a.articleId ?? null
-                                if (!nid) { alert('Cannot open translator: article id is missing for this item.'); return }
-                                navigate(`/consultant/articles/${nid}`)
-                              }}
-                            >Translate</button>
-                            {canDelete && (
+                    {sorted.map((a, i) => {
+                      const nid = getArticleId(a) || i
+                      return (
+                        <tr key={nid} style={{ borderBottom: '1px solid #f2f2f2', transition: 'background 150ms', cursor: 'default' }} onMouseEnter={e => e.currentTarget.style.background = '#fbfcff'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                          <td style={{ padding: 8 }}>
+                            <input type="checkbox" checked={selectedIds.includes(nid)} onChange={() => toggleSelect(nid)} />
+                          </td>
+                          <td style={styles.sourceCell}>{getSourceLabel(a) === '-' ? (extractSourceFromTitle(a.title) || getSourceLabel(a)) : getSourceLabel(a)}</td>
+                          <td style={styles.titleCell}>{getTitleLabel(a) || (a.title || '-')}</td>
+                          <td style={styles.dateCell}>{(a.PublishedAt || a.publishedAt || a.fetchedAt || a.crawledAt) ? new Date(a.PublishedAt || a.publishedAt || a.fetchedAt || a.crawledAt).toLocaleDateString() : '-'}</td>
+                          <td style={styles.statusCell}>{renderBadge(a)}</td>
+                          <td style={styles.actionsCell}>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              {/* Review button */}
                               <button
-                                title="Delete"
-                                style={{ background: 'transparent', border: 'none', color: '#c92b2b', fontSize: 16, cursor: 'pointer', paddingLeft: 6 }}
-                                onClick={async () => {
-                                  const nid = a.NewsArticleId ?? a.newsArticleId ?? a.id ?? a.ArticleId ?? a.articleId ?? null
-                                  if (!nid) { showToast('Cannot delete: id missing', 'error'); return }
-                                  if (!window.confirm('Delete this article? This cannot be undone.')) return
-                                  try {
-                                    await deleteArticle(nid)
-                                    showToast('Article deleted', 'success')
-                                    try { await loadPage(page) } catch (e) { /* ignore */ }
-                                    window.dispatchEvent(new Event('articles:changed'))
-                                  } catch (err) {
-                                    showToast('Failed to delete: ' + (err.message || err), 'error')
-                                  }
+                                title="Review"
+                                style={{ background: 'transparent', border: 'none', color: '#2b6cb0', fontSize: 16, cursor: 'pointer', paddingLeft: 6 }}
+                                onClick={() => {
+                                  if (!nid) { showToast('Cannot open review: id missing', 'error'); return }
+                                  navigate(`/consultant/articles/${nid}`)
                                 }}
-                              >🗑️</button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                              >📝</button>
+                              {canDelete && (
+                                <button
+                                  title="Delete"
+                                  style={{ background: 'transparent', border: 'none', color: '#c92b2b', fontSize: 16, cursor: 'pointer', paddingLeft: 6 }}
+                                  onClick={async () => {
+                                    if (!nid) { showToast('Cannot delete: id missing', 'error'); return }
+                                    if (!window.confirm('Delete this article? This cannot be undone.')) return
+                                    try {
+                                      await deleteArticle(nid)
+                                      showToast('Article deleted', 'success')
+                                      try { await loadPage(page) } catch (e) { /* ignore */ }
+                                      window.dispatchEvent(new Event('articles:changed'))
+                                    } catch (err) {
+                                      showToast('Failed to delete: ' + (err.message || err), 'error')
+                                    }
+                                  }}
+                                >🗑️</button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
               </table>
             </div>
@@ -584,5 +583,48 @@ export default function ArticlesList() {
         </div>
       </div>
     </div>
+  )
+}
+
+class ErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null, info: null }
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error, info) {
+    this.setState({ error, info })
+    // eslint-disable-next-line no-console
+    console.error('ErrorBoundary caught', error, info)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 24 }}>
+          <h3 style={{ color: '#c92b2b' }}>An error occurred while rendering this view.</h3>
+          <div style={{ whiteSpace: 'pre-wrap', marginTop: 12, background: '#fff7f7', padding: 12, borderRadius: 8 }}>
+            {String(this.state.error && this.state.error.toString())}
+            {this.state.info && this.state.info.componentStack ? '\n' + this.state.info.componentStack : ''}
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button onClick={() => window.location.reload()} style={{ padding: '8px 12px', borderRadius: 8 }}>Reload</button>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
+export default function ArticlesList() {
+  return (
+    <ErrorBoundary>
+      <ArticlesListInner />
+    </ErrorBoundary>
   )
 }

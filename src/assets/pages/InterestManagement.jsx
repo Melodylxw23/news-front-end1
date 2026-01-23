@@ -29,7 +29,7 @@ export default function InterestManagement() {
   const [loading, setLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ Name: '' })
+  const [form, setForm] = useState({ NameEN: '', NameZH: '' })
   const role = getRoleFromToken(localStorage.getItem('token'))
 
   useEffect(() => { load() }, [])
@@ -42,34 +42,39 @@ export default function InterestManagement() {
       const list = res?.data || res || []
       setItems(Array.isArray(list) ? list.map(i => ({ 
         id: i.interestTagId ?? i.InterestTagId ?? i.InterestId ?? i.interestId ?? i.id, 
-        Name: i.name ?? i.Name 
+        NameEN: i.nameEN ?? i.NameEN ?? i.NameEn ?? '',
+        NameZH: i.nameZH ?? i.NameZH ?? i.NameZh ?? ''
       })) : [])
     } catch (e) {
       alert('Failed to load interests: ' + e.message)
     } finally { setLoading(false) }
   }
 
-  const openCreate = () => { setEditing(null); setForm({ Name: '' }); setIsOpen(true) }
-  const openEdit = (it) => { setEditing(it); setForm({ Name: it.Name || '' }); setIsOpen(true) }
+  const openCreate = () => { setEditing(null); setForm({ NameEN: '', NameZH: '' }); setIsOpen(true) }
+  const openEdit = (it) => { setEditing(it); setForm({ NameEN: it.NameEN || '', NameZH: it.NameZH || '' }); setIsOpen(true) }
   const close = () => setIsOpen(false)
 
   const handleSave = async () => {
-    if (!form.Name || String(form.Name).trim() === '') { alert('Name required'); return }
+    if (!form.NameEN || String(form.NameEN).trim() === '') { alert('NameEN required'); return }
+    if (!form.NameZH || String(form.NameZH).trim() === '') { alert('NameZH required'); return }
     try {
+      const payload = { Name: (form.NameEN || form.NameZH || '').trim(), NameEN: form.NameEN.trim(), NameZH: form.NameZH.trim() }
       if (editing && editing.id) {
-        const res = await apiFetch(`/api/InterestTags/${editing.id}`, { method: 'PUT', body: JSON.stringify(form) })
+        const res = await apiFetch(`/api/InterestTags/${editing.id}`, { method: 'PUT', body: JSON.stringify(payload) })
         const updated = res?.data || res
         setItems(prev => prev.map(p => (p.id === editing.id ? ({ 
           id: updated?.interestTagId ?? updated?.InterestTagId ?? updated?.InterestId ?? updated?.interestId ?? updated?.id ?? editing.id, 
-          Name: updated?.name ?? updated?.Name ?? form.Name 
+          NameEN: updated?.nameEN ?? updated?.NameEN ?? payload.NameEN,
+          NameZH: updated?.nameZH ?? updated?.NameZH ?? payload.NameZH
         }) : p)))
         alert(res?.message || 'Updated')
       } else {
-        const res = await apiFetch('/api/InterestTags', { method: 'POST', body: JSON.stringify(form) })
+        const res = await apiFetch('/api/InterestTags', { method: 'POST', body: JSON.stringify(payload) })
         const created = res?.data || res
         setItems(prev => [{ 
           id: created?.interestTagId ?? created?.InterestTagId ?? created?.InterestId ?? created?.interestId ?? created?.id, 
-          Name: created?.name ?? created?.Name ?? form.Name 
+          NameEN: created?.nameEN ?? created?.NameEN ?? payload.NameEN,
+          NameZH: created?.nameZH ?? created?.NameZH ?? payload.NameZH
         }, ...prev])
         alert(res?.message || 'Created')
       }
@@ -102,14 +107,16 @@ export default function InterestManagement() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
-                <th style={{ padding: 12 }}>Topic</th>
+                <th style={{ padding: 12 }}>English (NameEN)</th>
+                <th style={{ padding: 12 }}>Chinese (NameZH)</th>
                 <th style={{ padding: 12 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {items.map((it, i) => (
                 <tr key={it.id ?? i} style={{ borderBottom: '1px solid #f7f7f7' }}>
-                  <td style={{ padding: 12 }}>{it.Name}</td>
+                  <td style={{ padding: 12 }}>{it.NameEN || '—'}</td>
+                  <td style={{ padding: 12 }}>{it.NameZH || '—'}</td>
                   <td style={{ padding: 12 }}>
                     <div style={{ display: 'flex', gap: 8 }}>
                       <button onClick={() => openEdit(it)} style={{ border: 'none', background: 'transparent', color: '#2b6cb0' }}>✏️</button>
@@ -118,7 +125,7 @@ export default function InterestManagement() {
                   </td>
                 </tr>
               ))}
-              {items.length === 0 && <tr><td colSpan={2} style={{ padding: 12 }}>No topics found.</td></tr>}
+              {items.length === 0 && <tr><td colSpan={3} style={{ padding: 12 }}>No topics found.</td></tr>}
             </tbody>
           </table>
         )}
@@ -132,7 +139,8 @@ export default function InterestManagement() {
               <button onClick={close}>Close</button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <input placeholder="Topic Name *" value={form.Name} onChange={e => setForm({ ...form, Name: e.target.value })} style={{ padding: 10, border: '1px solid #ddd', borderRadius: 6 }} />
+              <input placeholder="NameEN * (English)" value={form.NameEN} onChange={e => setForm({ ...form, NameEN: e.target.value })} style={{ padding: 10, border: '1px solid #ddd', borderRadius: 6 }} />
+              <input placeholder="NameZH * (Chinese)" value={form.NameZH} onChange={e => setForm({ ...form, NameZH: e.target.value })} style={{ padding: 10, border: '1px solid #ddd', borderRadius: 6 }} />
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
                 <button onClick={close}>Cancel</button>
                 <button onClick={handleSave} style={{ background: '#2f8b40', color: 'white', padding: '6px 12px', borderRadius: 6 }}>{editing ? 'Save' : 'Create'}</button>

@@ -8,10 +8,19 @@ const apiFetch = async (path, opts = {}) => {
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {})
   if (token) headers['Authorization'] = `Bearer ${token}`
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`
-  const res = await fetch(url, Object.assign({ headers }, opts))
+  let res
+  try {
+    console.debug('apiFetch ->', url)
+    res = await fetch(url, Object.assign({ headers }, opts))
+  } catch (err) {
+    console.error('apiFetch network error', url, err)
+    throw new Error('Network error: ' + (err && err.message ? err.message : String(err)))
+  }
   if (!res.ok) {
-    const txt = await res.text()
-    throw new Error(txt || res.statusText)
+    const txt = await res.text().catch(() => '')
+    const msg = txt || res.statusText || `HTTP ${res.status}`
+    console.error('apiFetch non-OK response', url, res.status, msg)
+    throw new Error(msg)
   }
   const text = await res.text().catch(() => '')
   try { return text ? JSON.parse(text) : null } catch { return text }
@@ -23,6 +32,12 @@ export default function NewsFetchDashboard() {
   const [lastFetchRaw, setLastFetchRaw] = useState(null)
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
+  const [settingModalOpen, setSettingModalOpen] = useState(false)
+  const [modalSetting, setModalSetting] = useState(null)
+  const [modalSelectedSourceIds, setModalSelectedSourceIds] = useState([])
+  const [modalPersist, setModalPersist] = useState(true)
+  const [modalForce, setModalForce] = useState(false)
+  const [modalDebug, setModalDebug] = useState(false)
   const showToast = (opts) => {
     try {
       alert((opts && opts.title ? opts.title : '') + (opts && opts.description ? '\n' + opts.description : ''))
@@ -47,10 +62,20 @@ export default function NewsFetchDashboard() {
   // Try to load persisted recent articles from the backend, fall back to localStorage
   const loadRecentArticles = async () => {
     try {
+      console.debug('loadRecentArticles: requesting /api/articles/recent')
       const res = await apiFetch('/api/articles/recent')
       const a = extractArticlesFromResponse(res)
       if (a && a.length > 0) {
         let normalized = a.map(normalizeArticle)
+        // ensure we pick up title from raw DTO when normalize didn't find a title
+        normalized = normalized.map(n => {
+          if (n && (!n.title || String(n.title).trim().length === 0)) {
+            const raw = n.raw || {}
+            const fallback = raw.TitleZH ?? raw.titleZH ?? raw.titleZh ?? raw.TitleEN ?? raw.titleEN ?? raw.Title ?? raw.title ?? raw.Summary ?? raw.summary ?? raw.Snippet ?? raw.snippet ?? ''
+            return { ...n, title: fallback || n.title }
+          }
+          return n
+        })
         // filter out articles with blank/whitespace-only titles
         normalized = normalized.filter(x => x && x.title && String(x.title).trim().length > 0)
         console.debug('loadRecentArticles - normalized recent articles:', normalized)
@@ -61,8 +86,10 @@ export default function NewsFetchDashboard() {
         })
         return
       }
+      console.debug('loadRecentArticles: no recent articles returned', res)
     } catch (e) {
-      // ignore - endpoint may not exist
+      console.error('loadRecentArticles failed', e)
+      try { showToast({ title: 'Failed to load recent articles', description: e.message || String(e), status: 'error' }) } catch (ex) { console.error(ex) }
     }
 
     // NOTE: removed localStorage fallback per configuration: rely on server-provided recent articles only
@@ -91,16 +118,29 @@ export default function NewsFetchDashboard() {
     finally { setLoading(false) }
   }
 
-  const triggerFetch = async (persist = true) => {
+  const triggerFetch = async (persist = true, sourceSetting = null, sourceIds = null, debug = false, force = false) => {
     if (running) return
     setRunning(true)
     try {
-      const ids = sources.filter(x=>x.IsActive).map(x=>x.SourceId)
-      const res = await apiFetch('/api/sources/fetch', { method: 'POST', body: JSON.stringify({ SourceIds: ids, Persist: persist }) })
+      const ids = Array.isArray(sourceIds) && sourceIds.length > 0 ? sourceIds : sources.filter(x=>x.IsActive).map(x=>x.SourceId)
+      const body = { SourceIds: ids, Persist: persist }
+      if (sourceSetting) body.SourceSettingOverride = sourceSetting
+      // include Force flag if requested
+      if (force) body.Force = true
+      const url = '/api/articles/fetchArticles' + (debug ? '?debug=true' : '')
+      const res = await apiFetch(url, { method: 'POST', body: JSON.stringify(body) })
       setLastFetchRaw(res)
       const a = extractArticlesFromResponse(res)
       if (a && a.length > 0) {
         let normalized = a.map(normalizeArticle)
+        normalized = normalized.map(n => {
+          if (n && (!n.title || String(n.title).trim().length === 0)) {
+            const raw = n.raw || {}
+            const fallback = raw.TitleZH ?? raw.titleZh ?? raw.Title ?? raw.title ?? raw.Summary ?? raw.summary ?? raw.Snippet ?? raw.snippet ?? ''
+            return { ...n, title: fallback || n.title }
+          }
+          return n
+        })
         normalized = normalized.filter(x => x && x.title && String(x.title).trim().length > 0)
         console.debug('triggerFetch - normalized fetched articles:', normalized)
         setArticles(prev => {
@@ -108,7 +148,11 @@ export default function NewsFetchDashboard() {
           return merged
         })
         // attempt to reload persisted articles from server (if backend saved them)
-        if (persist) await loadRecentArticles()
+        if (persist) {
+          await loadRecentArticles()
+          // notify other views (ArticleList) that articles may have changed
+          try { window.dispatchEvent(new Event('articles:changed')) } catch (e) { /* ignore */ }
+        }
         showToast({ title: 'Fetch finished', description: `Fetched ${a.length} articles`, status: 'success' })
       } else {
         // No articles returned
@@ -120,8 +164,15 @@ export default function NewsFetchDashboard() {
   }
 
   const normalizeArticle = (a) => ({
+    // handle nested payloads like { Article: { TitleZH: ... } } or top-level shapes
     id: a.Id ?? a.id ?? a.ArticleId ?? a.articleId ?? a.NewsArticleId ?? a.newsArticleId ?? a.NewsArticleID,
-    title: a.Title ?? a.title ?? a.headline ?? a.TitleSnippet ?? a.titleSnippet,
+    // prefer Chinese title when available (check nested article/article casing and lower-t variants too)
+    title: (
+      a.Article?.TitleZH ?? a.Article?.titleZh ?? a.Article?.TitleEN ??
+      a.article?.TitleZH ?? a.article?.titleZh ?? a.article?.titleZH ?? a.article?.titleEN ??
+      a.TitleZH ?? a.titleZH ?? a.titleZh ?? a.TitleEN ?? a.titleEN ??
+      a.Title ?? a.title ?? a.headline ?? a.TitleSnippet ?? a.titleSnippet
+    ) || null,
     snippet: a.Snippet ?? a.snippet ?? a.Summary ?? a.summary ?? '',
     // support many possible URL field names returned by backend (include lowercase sourceurl)
     url: a.Url ?? a.url ?? a.Link ?? a.link ?? a.SourceURL ?? a.SourceUrl ?? a.sourceUrl ?? a.sourceURL ?? a.source_url ?? a.sourceurl
@@ -212,8 +263,16 @@ export default function NewsFetchDashboard() {
     if (!res) return []
     // If it's an array of articles
     if (Array.isArray(res)) {
-      // array of article-like objects
-      if (res.length > 0 && (res[0].Title || res[0].title || res[0].headline || res[0].Url || res[0].ArticleId)) return res
+      // array of article-like objects - accept many possible property names including localized fields
+      if (res.length > 0) {
+        const sample = res[0]
+        const looksLikeArticle = Boolean(
+          sample.Title || sample.title || sample.headline || sample.Url || sample.ArticleId || sample.ArticleId ||
+          sample.TitleZH || sample.titleZH || sample.TitleEN || sample.titleEN || sample.titleZh || sample.titleEn || sample.NewsArticleId || sample.id ||
+          sample.Summary || sample.summary || sample.SummaryEN || sample.SummaryZH || sample.Snippet || sample.snippet
+        )
+        if (looksLikeArticle) return res
+      }
       // array of containers which may have Articles/Items (support mixed casing)
       const flattened = []
       for (const item of res) {
@@ -232,6 +291,9 @@ export default function NewsFetchDashboard() {
       if (Array.isArray(res.articles) && res.articles.length) return res.articles
       if (Array.isArray(res.items) && res.items.length) return res.items
       if (Array.isArray(res.results) && res.results.length) return res.results
+      // some endpoints return an object with DTO properties directly (e.g. { Items: [...] } or top-level array-like keys)
+      if (Array.isArray(res.Items) && res.Items.length) return res.Items
+      if (Array.isArray(res.Data) && res.Data.length) return res.Data
       // maybe object keyed by source id
       const keys = Object.keys(res)
       for (const k of keys) {
@@ -268,7 +330,7 @@ export default function NewsFetchDashboard() {
 
   const fetchForSource = async (sourceId, persist = true) => {
     try {
-      const res = await apiFetch('/api/sources/fetch', { method: 'POST', body: JSON.stringify({ SourceIds: [sourceId], Persist: persist }) })
+      const res = await apiFetch('/api/articles/fetchArticles', { method: 'POST', body: JSON.stringify({ SourceIds: [sourceId], Persist: persist }) })
       setLastFetchRaw(res)
       const a = extractArticlesFromResponse(res)
       if (a && a.length > 0) {
@@ -279,7 +341,10 @@ export default function NewsFetchDashboard() {
           const merged = mergeNewOnTop(normalized, prev)
           return merged
         })
-        if (persist) await loadRecentArticles()
+        if (persist) {
+          await loadRecentArticles()
+          try { window.dispatchEvent(new Event('articles:changed')) } catch (e) { /* ignore */ }
+        }
         showToast({ title: 'Fetch finished', description: `Fetched ${a.length} articles`, status: 'success' })
       } else {
         // No articles for this source
@@ -358,16 +423,12 @@ export default function NewsFetchDashboard() {
 
   const role = getRoleFromToken(localStorage.getItem('token'))
 
-  if (role !== 'admin') return <div style={{ padding: 24 }}><div style={{ fontWeight: 600 }}>You do not have permission to view this page.</div></div>
+  if (role !== 'consultant') return <div style={{ padding: 24 }}><div style={{ fontWeight: 600 }}>You do not have permission to view this page.</div></div>
   return (
     <div style={{ padding: 20, background: '#fbf4f2', minHeight: '80vh' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0 }}>News Fetch Dashboard</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e6e6e6', background: 'white' }}>Create New Fetch Job</button>
-          <button style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e6e6e6', background: 'white' }}>Update Crawler Settings</button>
-          <button style={{ padding: '8px 12px', borderRadius: 8, border: 'none', background: '#c92b2b', color: 'white' }}>Export Logs</button>
-        </div>
+        
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 16 }}>
@@ -417,7 +478,35 @@ export default function NewsFetchDashboard() {
         <div style={{ background: 'white', padding: 16, borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.06)' }}>
           <div style={{ color: '#666', fontSize: 13 }}>Manual Fetch Trigger</div>
           <div style={{ marginTop: 12 }}>
-            <button onClick={() => triggerFetch(true)} disabled={running} style={{ background: '#5b46ff', color: 'white', padding: '8px 14px', borderRadius: 8, border: 'none' }}>{running ? 'Running...' : 'Trigger Fetch Now'}</button>
+            <button
+              onClick={() => {
+                // open modal with defaults and currently active sources selected
+                const defaults = {
+                  TranslateOnFetch: true,
+                  SummaryWordCount: 150,
+                  SummaryTone: 'neutral',
+                  SummaryFormat: 'paragraph',
+                  CustomKeyPoints: '',
+                  MaxArticlesPerFetch: 10,
+                  IncludeOriginalChinese: true,
+                  IncludeEnglishSummary: true,
+                  IncludeChineseSummary: true,
+                  MinArticleLength: 0,
+                  SummaryFocus: '',
+                  SentimentAnalysisEnabled: false,
+                  HighlightEntities: false,
+                  SummaryLanguage: 'EN'
+                }
+                setModalSetting(defaults)
+                setModalSelectedSourceIds(sources.filter(x=>x.IsActive).map(x=>x.SourceId))
+                setModalPersist(true)
+                setModalForce(false)
+                setModalDebug(false)
+                setSettingModalOpen(true)
+              }}
+              disabled={running}
+              style={{ background: '#5b46ff', color: 'white', padding: '8px 14px', borderRadius: 8, border: 'none' }}
+            >{running ? 'Running...' : 'Trigger Fetch Now'}</button>
           </div>
         </div>
         <div style={{ background: 'white', padding: 16, borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.06)' }}>
@@ -425,6 +514,130 @@ export default function NewsFetchDashboard() {
           <div style={{ marginTop: 8, color: '#c92b2b', fontSize: 13 }}>No recent errors.</div>
         </div>
       </div>
+
+      {settingModalOpen && (
+        <div role="dialog" aria-modal="true" style={{ position: 'fixed', left: 0, top: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+          <div style={{ width: 760, maxWidth: '96%', background: 'white', borderRadius: 12, padding: 18, boxShadow: '0 12px 40px rgba(0,0,0,0.2)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontWeight: 700 }}>Source Setting</div>
+              <div>
+                <button onClick={() => setSettingModalOpen(false)} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>✕</button>
+              </div>
+            </div>
+
+            <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>Select Sources</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {sources.map(s => (
+                    <label key={s.SourceId} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input type="checkbox" checked={modalSelectedSourceIds.includes(s.SourceId)} onChange={(e) => {
+                        const next = modalSelectedSourceIds.slice()
+                        if (e.target.checked) {
+                          if (!next.includes(s.SourceId)) next.push(s.SourceId)
+                        } else {
+                          const idx = next.indexOf(s.SourceId)
+                          if (idx !== -1) next.splice(idx,1)
+                        }
+                        setModalSelectedSourceIds(next)
+                      }} />
+                      <span>{s.Name ?? s.name ?? `Source ${s.SourceId}`}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Translate On Fetch</div>
+                  <input type="checkbox" checked={!!(modalSetting && modalSetting.TranslateOnFetch)} onChange={e => setModalSetting({...modalSetting, TranslateOnFetch: e.target.checked})} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Summary Word Count</div>
+                  <input type="number" value={modalSetting?.SummaryWordCount ?? 150} onChange={e => setModalSetting({...modalSetting, SummaryWordCount: Number(e.target.value)})} style={{ width: '100%' }} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Max Articles Per Fetch</div>
+                  <input type="number" value={modalSetting?.MaxArticlesPerFetch ?? 10} onChange={e => setModalSetting({...modalSetting, MaxArticlesPerFetch: Number(e.target.value)})} style={{ width: '100%' }} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Min Article Length</div>
+                  <input type="number" value={modalSetting?.MinArticleLength ?? 200} onChange={e => setModalSetting({...modalSetting, MinArticleLength: Number(e.target.value)})} style={{ width: '100%' }} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Summary Tone</div>
+                  <select value={modalSetting?.SummaryTone ?? 'neutral'} onChange={e => setModalSetting({...modalSetting, SummaryTone: e.target.value})} style={{ width: '100%' }}>
+                    <option value="neutral">neutral</option>
+                    <option value="positive">positive</option>
+                    <option value="negative">negative</option>
+                  </select>
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Summary Format</div>
+                  <select value={modalSetting?.SummaryFormat ?? 'paragraph'} onChange={e => setModalSetting({...modalSetting, SummaryFormat: e.target.value})} style={{ width: '100%' }}>
+                    <option value="paragraph">paragraph</option>
+                    <option value="bullets">bullets</option>
+                  </select>
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Include English Summary</div>
+                  <input type="checkbox" checked={!!(modalSetting && modalSetting.IncludeEnglishSummary)} onChange={e => setModalSetting({...modalSetting, IncludeEnglishSummary: e.target.checked})} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Include Chinese Summary</div>
+                  <input type="checkbox" checked={!!(modalSetting && modalSetting.IncludeChineseSummary)} onChange={e => setModalSetting({...modalSetting, IncludeChineseSummary: e.target.checked})} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Sentiment Analysis Enabled</div>
+                  <input type="checkbox" checked={!!(modalSetting && modalSetting.SentimentAnalysisEnabled)} onChange={e => setModalSetting({...modalSetting, SentimentAnalysisEnabled: e.target.checked})} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Highlight Entities</div>
+                  <input type="checkbox" checked={!!(modalSetting && modalSetting.HighlightEntities)} onChange={e => setModalSetting({...modalSetting, HighlightEntities: e.target.checked})} />
+                </label>
+                <label style={{ display: 'block', gridColumn: '1 / -1' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Custom Key Points (comma-separated)</div>
+                  <textarea value={modalSetting?.CustomKeyPoints ?? ''} onChange={e => setModalSetting({...modalSetting, CustomKeyPoints: e.target.value})} style={{ width: '100%' }} rows={3} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Summary Focus</div>
+                  <input type="text" value={modalSetting?.SummaryFocus ?? ''} onChange={e => setModalSetting({...modalSetting, SummaryFocus: e.target.value})} style={{ width: '100%' }} />
+                </label>
+                <label style={{ display: 'block' }}>
+                  <div style={{ fontSize: 13, color: '#444' }}>Summary Language</div>
+                  <select value={modalSetting?.SummaryLanguage ?? 'EN'} onChange={e => setModalSetting({...modalSetting, SummaryLanguage: e.target.value})} style={{ width: '100%' }}>
+                    <option value="EN">EN</option>
+                    <option value="ZH">ZH</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="checkbox" checked={modalPersist} onChange={e => setModalPersist(e.target.checked)} /> Persist results to server
+              </label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input type="checkbox" checked={modalForce} onChange={e => setModalForce(e.target.checked)} /> Force (allow duplicates)
+                </label>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input type="checkbox" checked={modalDebug} onChange={e => setModalDebug(e.target.checked)} /> Debug (include samples)
+                </label>
+                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                  <button onClick={() => setSettingModalOpen(false)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e6e6e6', background: 'white' }}>Cancel</button>
+                  <button onClick={async () => {
+                    try {
+                      await triggerFetch(modalPersist, modalSetting, modalSelectedSourceIds, modalDebug, modalForce)
+                    } catch (e) { /* triggerFetch handles errors */ }
+                    setSettingModalOpen(false)
+                  }} style={{ padding: '8px 12px', borderRadius: 8, border: 'none', background: '#5b46ff', color: 'white' }}>{running ? 'Running...' : 'Fetch'}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
         <div>

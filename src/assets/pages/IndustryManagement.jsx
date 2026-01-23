@@ -29,7 +29,7 @@ export default function IndustryManagement() {
   const [loading, setLoading] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ Name: '' })
+  const [form, setForm] = useState({ NameEN: '', NameZH: '' })
   const role = getRoleFromToken(localStorage.getItem('token'))
 
   useEffect(() => { load() }, [])
@@ -45,7 +45,8 @@ export default function IndustryManagement() {
       const mapped = Array.isArray(list) ? list.map(i => {
         const item = { 
           id: i.industryTagId ?? i.IndustryTagId ?? i.IndustryId ?? i.industryId ?? i.id, 
-          Name: i.name ?? i.Name 
+          NameEN: i.nameEN ?? i.NameEN ?? i.NameEn ?? '',
+          NameZH: i.nameZH ?? i.NameZH ?? i.NameZh ?? ''
         }
         console.log('[load] mapped item:', i, '→', item)
         return item
@@ -56,37 +57,42 @@ export default function IndustryManagement() {
     } finally { setLoading(false) }
   }
 
-  const openCreate = () => { setEditing(null); setForm({ Name: '' }); setIsOpen(true) }
+  const openCreate = () => { setEditing(null); setForm({ NameEN: '', NameZH: '' }); setIsOpen(true) }
   const openEdit = (it) => { 
     console.log('[openEdit] item:', it, 'id:', it?.id)
     setEditing(it); 
-    setForm({ Name: it.Name || '' }); 
+    setForm({ NameEN: it.NameEN || '', NameZH: it.NameZH || '' }); 
     setIsOpen(true) 
   }
   const close = () => setIsOpen(false)
 
   const handleSave = async () => {
-    if (!form.Name || String(form.Name).trim() === '') { alert('Name required'); return }
+    if (!form.NameEN || String(form.NameEN).trim() === '') { alert('NameEN required'); return }
+    if (!form.NameZH || String(form.NameZH).trim() === '') { alert('NameZH required'); return }
     
     console.log('[handleSave] editing:', editing, 'editing.id:', editing?.id)
     
     try {
       if (editing && editing.id) {
         console.log('[handleSave] UPDATE mode - calling PUT /api/IndustryTags/' + editing.id)
-        const res = await apiFetch(`/api/IndustryTags/${editing.id}`, { method: 'PUT', body: JSON.stringify(form) })
+        const payload = { Name: (form.NameEN || form.NameZH || '').trim(), NameEN: form.NameEN.trim(), NameZH: form.NameZH.trim() }
+        const res = await apiFetch(`/api/IndustryTags/${editing.id}`, { method: 'PUT', body: JSON.stringify(payload) })
         const updated = res?.data || res
         setItems(prev => prev.map(p => (p.id === editing.id ? ({ 
           id: updated?.industryTagId ?? updated?.IndustryTagId ?? updated?.IndustryId ?? updated?.industryId ?? updated?.id ?? editing.id, 
-          Name: updated?.name ?? updated?.Name ?? form.Name 
+          NameEN: updated?.nameEN ?? updated?.NameEN ?? payload.NameEN,
+          NameZH: updated?.nameZH ?? updated?.NameZH ?? payload.NameZH
         }) : p)))
         alert(res?.message || 'Updated')
       } else {
         console.log('[handleSave] CREATE mode - calling POST /api/IndustryTags')
-        const res = await apiFetch('/api/IndustryTags', { method: 'POST', body: JSON.stringify(form) })
+        const payload = { Name: (form.NameEN || form.NameZH || '').trim(), NameEN: form.NameEN.trim(), NameZH: form.NameZH.trim() }
+        const res = await apiFetch('/api/IndustryTags', { method: 'POST', body: JSON.stringify(payload) })
         const created = res?.data || res
         setItems(prev => [{ 
           id: created?.industryTagId ?? created?.IndustryTagId ?? created?.IndustryId ?? created?.industryId ?? created?.id, 
-          Name: created?.name ?? created?.Name ?? form.Name 
+          NameEN: created?.nameEN ?? created?.NameEN ?? payload.NameEN,
+          NameZH: created?.nameZH ?? created?.NameZH ?? payload.NameZH
         }, ...prev])
         alert(res?.message || 'Created')
       }
@@ -116,28 +122,30 @@ export default function IndustryManagement() {
 
       <div style={{ background: 'white', padding: 18, borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.06)' }}>
         {loading ? <div>Loading...</div> : (
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
-                <th style={{ padding: 12 }}>Industry Tag</th>
-                <th style={{ padding: 12 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((it, i) => (
-                <tr key={it.id ?? i} style={{ borderBottom: '1px solid #f7f7f7' }}>
-                  <td style={{ padding: 12 }}>{it.Name}</td>
-                  <td style={{ padding: 12 }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button onClick={() => openEdit(it)} style={{ border: 'none', background: 'transparent', color: '#2b6cb0' }}>✏️</button>
-                      <button onClick={() => handleDelete(it.id)} style={{ border: 'none', background: 'transparent', color: '#c43d3d' }}>🗑️</button>
-                    </div>
-                  </td>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ textAlign: 'left', borderBottom: '1px solid #eee' }}>
+                  <th style={{ padding: 12 }}>English (NameEN)</th>
+                  <th style={{ padding: 12 }}>Chinese (NameZH)</th>
+                  <th style={{ padding: 12 }}>Actions</th>
                 </tr>
-              ))}
-              {items.length === 0 && <tr><td colSpan={2} style={{ padding: 12 }}>No industries found.</td></tr>}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {items.map((it, i) => (
+                  <tr key={it.id ?? i} style={{ borderBottom: '1px solid #f7f7f7' }}>
+                    <td style={{ padding: 12 }}>{it.NameEN || '—'}</td>
+                    <td style={{ padding: 12 }}>{it.NameZH || '—'}</td>
+                    <td style={{ padding: 12 }}>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => openEdit(it)} style={{ border: 'none', background: 'transparent', color: '#2b6cb0' }}>✏️</button>
+                        <button onClick={() => handleDelete(it.id)} style={{ border: 'none', background: 'transparent', color: '#c43d3d' }}>🗑️</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {items.length === 0 && <tr><td colSpan={3} style={{ padding: 12 }}>No industries found.</td></tr>}
+              </tbody>
+            </table>
         )}
       </div>
 
@@ -149,7 +157,8 @@ export default function IndustryManagement() {
               <button onClick={close}>Close</button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <input placeholder="Industry Tag *" value={form.Name} onChange={e => setForm({ ...form, Name: e.target.value })} style={{ padding: 10, border: '1px solid #ddd', borderRadius: 6 }} />
+              <input placeholder="NameEN * (English)" value={form.NameEN} onChange={e => setForm({ ...form, NameEN: e.target.value })} style={{ padding: 10, border: '1px solid #ddd', borderRadius: 6 }} />
+              <input placeholder="NameZH * (Chinese)" value={form.NameZH} onChange={e => setForm({ ...form, NameZH: e.target.value })} style={{ padding: 10, border: '1px solid #ddd', borderRadius: 6 }} />
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
                 <button onClick={close}>Cancel</button>
                 <button onClick={handleSave} style={{ background: '#2f8b40', color: 'white', padding: '6px 12px', borderRadius: 6 }}>{editing ? 'Save' : 'Create'}</button>

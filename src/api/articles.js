@@ -63,4 +63,11 @@ export async function deleteArticle(id) {
   return res.status === 204 ? null : res.json()
 }
 
-export default { listArticles, getArticle, translatePreview, translateAndSave, approveTranslation, searchArticles, stats, deleteArticle }
+export async function publishArticles(ids = []) {
+  if (!Array.isArray(ids) || ids.length === 0) throw new Error('ids required')
+  const res = await fetch(join(`/api/articles/publish`), { method: 'POST', headers: buildHeaders(), body: JSON.stringify({ ids }) })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export default { listArticles, getArticle, translatePreview, translateAndSave, approveTranslation, searchArticles, stats, deleteArticle, publishArticles }

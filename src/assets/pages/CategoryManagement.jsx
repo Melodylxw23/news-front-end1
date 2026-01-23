@@ -25,8 +25,8 @@ export default function CategoryManagement() {
   const [searchQuery, setSearchQuery] = useState('')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
   const [isEditOpen, setIsEditOpen] = useState(false)
-  const [createForm, setCreateForm] = useState({ Name: '' })
-  const [editForm, setEditForm] = useState({ id: null, Name: '' })
+  const [createForm, setCreateForm] = useState({ NameEN: '', NameZH: '' })
+  const [editForm, setEditForm] = useState({ id: null, NameEN: '', NameZH: '' })
   const role = getRoleFromToken(localStorage.getItem('token'))
 
   useEffect(() => { load() }, [activeTab])
@@ -40,7 +40,10 @@ export default function CategoryManagement() {
       
       const mapped = Array.isArray(list) ? list.map(item => ({
         id: item.industryTagId || item.interestTagId || item.id,
-        name: item.name || item.Name || 'N/A'
+        // prefer explicit NameEN for display, fall back to older name fields or NameZH
+        name: item.nameEN ?? item.NameEN ?? item.name ?? item.Name ?? item.nameZH ?? item.NameZh ?? 'N/A',
+        NameEN: item.nameEN ?? item.NameEN ?? item.name ?? item.Name ?? '',
+        NameZH: item.nameZH ?? item.NameZH ?? item.NameZh ?? ''
       })) : []
 
       setItems(mapped)
@@ -50,20 +53,19 @@ export default function CategoryManagement() {
   }
 
   const handleCreate = async () => {
-    if (!createForm.Name) {
-      alert('Name is required')
-      return
-    }
+    if (!createForm.NameEN || String(createForm.NameEN).trim() === '') { alert('NameEN required'); return }
+    if (!createForm.NameZH || String(createForm.NameZH).trim() === '') { alert('NameZH required'); return }
 
     try {
       const endpoint = activeTab === 'industry' ? '/api/IndustryTags' : '/api/InterestTags'
+      const payload = { Name: (createForm.NameEN || createForm.NameZH || '').trim(), NameEN: createForm.NameEN.trim(), NameZH: createForm.NameZH.trim() }
       await apiFetch(endpoint, {
         method: 'POST',
-        body: JSON.stringify(createForm)
+        body: JSON.stringify(payload)
       })
       alert(`${activeTab === 'industry' ? 'Industry' : 'Topic'} created successfully`)
       setIsCreateOpen(false)
-      setCreateForm({ Name: '' })
+      setCreateForm({ NameEN: '', NameZH: '' })
       load()
     } catch (e) {
       alert('Failed to create: ' + e.message)
@@ -71,22 +73,21 @@ export default function CategoryManagement() {
   }
 
   const handleEdit = async () => {
-    if (!editForm.Name) {
-      alert('Name is required')
-      return
-    }
+    if (!editForm.NameEN || String(editForm.NameEN).trim() === '') { alert('NameEN required'); return }
+    if (!editForm.NameZH || String(editForm.NameZH).trim() === '') { alert('NameZH required'); return }
 
     try {
       const endpoint = activeTab === 'industry' 
         ? `/api/IndustryTags/${editForm.id}` 
         : `/api/InterestTags/${editForm.id}`
+      const payload = { Name: (editForm.NameEN || editForm.NameZH || '').trim(), NameEN: editForm.NameEN.trim(), NameZH: editForm.NameZH.trim() }
       await apiFetch(endpoint, {
         method: 'PUT',
-        body: JSON.stringify({ Name: editForm.Name })
+        body: JSON.stringify(payload)
       })
       alert(`${activeTab === 'industry' ? 'Industry' : 'Topic'} updated successfully`)
       setIsEditOpen(false)
-      setEditForm({ id: null, Name: '' })
+      setEditForm({ id: null, NameEN: '', NameZH: '' })
       load()
     } catch (e) {
       alert('Failed to update: ' + e.message)
@@ -109,12 +110,13 @@ export default function CategoryManagement() {
   }
 
   const openEditModal = (item) => {
-    setEditForm({ id: item.id, Name: item.name })
+    setEditForm({ id: item.id, NameEN: item.NameEN || item.name || '', NameZH: item.NameZH || '' })
     setIsEditOpen(true)
   }
 
   const filteredItems = items.filter(item => 
-    item.name.toLowerCase().includes(searchQuery.toLowerCase())
+    ((item.NameEN || item.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+     (item.NameZH || '').toLowerCase().includes(searchQuery.toLowerCase()))
   )
 
   const stats = {
@@ -234,14 +236,16 @@ export default function CategoryManagement() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ textAlign: 'left', borderBottom: '2px solid #eee' }}>
-                  <th style={{ padding: 12 }}>{activeTab === 'industry' ? 'Industry' : 'Topic of Interest'} Tag</th>
+                  <th style={{ padding: 12 }}>{activeTab === 'industry' ? 'Industry' : 'Topic of Interest'} Tag (English)</th>
+                  <th style={{ padding: 12 }}>Chinese</th>
                   <th style={{ padding: 12, textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredItems.map((item, i) => (
                   <tr key={item.id ?? i} style={{ borderBottom: '1px solid #f7f7f7' }}>
-                    <td style={{ padding: 12, fontSize: 15 }}>{item.name}</td>
+                    <td style={{ padding: 12, fontSize: 15 }}>{item.NameEN || item.name || '—'}</td>
+                    <td style={{ padding: 12 }}>{item.NameZH || '—'}</td>
                     <td style={{ padding: 12, textAlign: 'right' }}>
                       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button
@@ -276,7 +280,7 @@ export default function CategoryManagement() {
                 ))}
                 {filteredItems.length === 0 && (
                   <tr>
-                    <td colSpan={2} style={{ padding: 12, textAlign: 'center' }}>
+                    <td colSpan={3} style={{ padding: 12, textAlign: 'center' }}>
                       No items found.
                     </td>
                   </tr>
@@ -313,11 +317,11 @@ export default function CategoryManagement() {
               Create {activeTab === 'industry' ? 'Industry' : 'Topic'} Tag
             </h2>
             <div style={{ marginBottom: 20 }}>
-              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Name</label>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Name (English)</label>
               <input
                 type="text"
-                value={createForm.Name}
-                onChange={(e) => setCreateForm({ ...createForm, Name: e.target.value })}
+                value={createForm.NameEN}
+                onChange={(e) => setCreateForm({ ...createForm, NameEN: e.target.value })}
                 style={{
                   width: '100%',
                   padding: '10px 12px',
@@ -325,7 +329,21 @@ export default function CategoryManagement() {
                   borderRadius: 6,
                   fontSize: 14
                 }}
-                placeholder={`Enter ${activeTab === 'industry' ? 'industry' : 'topic'} name`}
+                placeholder={`Enter ${activeTab === 'industry' ? 'industry' : 'topic'} name (English)`}
+              />
+              <label style={{ display: 'block', marginTop: 12, marginBottom: 8, fontWeight: 600 }}>Name (Chinese)</label>
+              <input
+                type="text"
+                value={createForm.NameZH}
+                onChange={(e) => setCreateForm({ ...createForm, NameZH: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  border: '1px solid #ddd',
+                  borderRadius: 6,
+                  fontSize: 14
+                }}
+                placeholder={`Enter ${activeTab === 'industry' ? 'industry' : 'topic'} name (Chinese)`}
               />
             </div>
             <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
@@ -390,11 +408,24 @@ export default function CategoryManagement() {
               Edit {activeTab === 'industry' ? 'Industry' : 'Topic'} Tag
             </h2>
             <div style={{ marginBottom: 20 }}>
-              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Name</label>
+              <label style={{ display: 'block', marginBottom: 8, fontWeight: 600 }}>Name (English)</label>
               <input
                 type="text"
-                value={editForm.Name}
-                onChange={(e) => setEditForm({ ...editForm, Name: e.target.value })}
+                value={editForm.NameEN}
+                onChange={(e) => setEditForm({ ...editForm, NameEN: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  border: '1px solid #ddd',
+                  borderRadius: 6,
+                  fontSize: 14
+                }}
+              />
+              <label style={{ display: 'block', marginTop: 12, marginBottom: 8, fontWeight: 600 }}>Name (Chinese)</label>
+              <input
+                type="text"
+                value={editForm.NameZH}
+                onChange={(e) => setEditForm({ ...editForm, NameZH: e.target.value })}
                 style={{
                   width: '100%',
                   padding: '10px 12px',

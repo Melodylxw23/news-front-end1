@@ -23,8 +23,6 @@ import StaffRegister from './assets/pages/StaffRegister';
 import LoginLanding from './assets/pages/LoginLanding';
 import SourceManagement from './assets/pages/SourceManagement';
 import NewsFetchDashboard from './assets/pages/NewsFetchDashboard';
-import ArticlesList from './assets/pages/ArticlesList';
-import ArticleTranslate from './assets/pages/ArticleTranslate';
 import IndustryManagement from './assets/pages/IndustryManagement'
 import InterestManagement from './assets/pages/InterestManagement'
 import CategoryManagement from './assets/pages/CategoryManagement'
@@ -37,11 +35,10 @@ import MemberProfile from './assets/pages/MemberProfile'
 import BroadcastManagement from './assets/pages/BroadcastManagement';
 import DraftsList from './assets/pages/DraftsList';
 import MessageSent from './assets/pages/MessageSent';
-import ContentCreation from './assets/pages/ContentCreation';
-import GenerateTextSummary from './assets/pages/GenerateTextSummary';
-import GeneratePDFPoster from './assets/pages/GeneratePDFPoster';
-import GeneratePPTSlides from './assets/pages/GeneratePPTSlides';
 import { p, path } from 'framer-motion/client';
+import ArticlesList from './assets/pages/ArticleList';
+import ArticleReview from './assets/pages/ArticleReview';
+
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -81,14 +78,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     ],
     consultant: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
-      { path: '/consultant/articles', label: 'Articles', icon: '📰' },
-      { path: '/consultant/content-creation', label: 'Content Creation', icon: '✨' }
+      { path: '/consultant/fetch', label: 'News Fetch Dashboard', icon: '📰' },
+      {path: '/consultant/articles', label: 'Articles List', icon: '📄' },
     ],
     admin: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
       { path: '/admin/users', label: 'User Management', icon: '👥' },
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
-      { path: '/admin/fetch', label: 'News Fetch Dashboard', icon: '📰' },
       { path: '/admin/sources', label: 'Source Management', icon: '🗂️' },
       { path: '/admin/industries', label: 'Industry Management', icon: '🏭' },
       { path: '/admin/interests', label: 'Interest Management', icon: '⭐' },
@@ -307,13 +303,9 @@ function AppContent() {
           <Route path={'/admin/users'} element={<UserManagement />} />
           <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
-          <Route path={'/admin/fetch'} element={<NewsFetchDashboard />} />
+          <Route path={'/consultant/fetch'} element={<NewsFetchDashboard />} />
           <Route path={'/consultant/articles'} element={<ArticlesList />} />
-          <Route path={'/consultant/articles/:id'} element={<ArticleTranslate />} />
-          <Route path={'/consultant/content-creation'} element={<ContentCreation />} />
-          <Route path={'/consultant/generate-summary/:articleId'} element={<GenerateTextSummary />} />
-          <Route path={'/consultant/generate-pdf/:articleId'} element={<GeneratePDFPoster />} />
-          <Route path={'/consultant/generate-ppt/:articleId'} element={<GeneratePPTSlides />} />
+          <Route path={'/consultant/articles/:id'} element={<ArticleReview />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
           <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />
