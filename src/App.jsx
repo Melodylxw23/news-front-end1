@@ -38,6 +38,8 @@ import MessageSent from './assets/pages/MessageSent';
 import { p, path } from 'framer-motion/client';
 import ArticlesList from './assets/pages/ArticleList';
 import ArticleReview from './assets/pages/ArticleReview';
+import PublishQueue from './assets/pages/PublishQueue';
+import PublishArticle from './assets/pages/PublishArticle';
 
 
 // Sidebar component (trimmed to use only existing pages)
@@ -80,14 +82,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
       { path: '/consultant/fetch', label: 'News Fetch Dashboard', icon: '📰' },
       {path: '/consultant/articles', label: 'Articles List', icon: '📄' },
+      {path: '/consultant/publish-queue', label: 'Publish Queue', icon: '📝' }
     ],
     admin: [
       { path: '/landing', label: 'Dashboard', icon: '🏠' },
       { path: '/admin/users', label: 'User Management', icon: '👥' },
       { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
       { path: '/admin/sources', label: 'Source Management', icon: '🗂️' },
-      { path: '/admin/industries', label: 'Industry Management', icon: '🏭' },
-      { path: '/admin/interests', label: 'Interest Management', icon: '⭐' },
       { path: '/admin/broadcast', label: 'Broadcast Management', icon: '📢' }
     ]
   };
@@ -311,6 +312,8 @@ function AppContent() {
           <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />
           <Route path={'/drafts'} element={<DraftsList />} />
           <Route path={'/message-sent'} element={<MessageSent />} />
+          <Route path={'/consultant/publish-queue'} element={<PublishQueue />} />
+          <Route path={'/consultant/publish/:id'} element={<PublishArticle />} />
         </Routes>
       </Box>
     </Flex>
