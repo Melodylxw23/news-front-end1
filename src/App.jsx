@@ -279,7 +279,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
             bg="transparent"
             _hover={{ bg: '#A10005', color: 'white' }}
             transition="all 0.2s"
-            mb={4}
+            mb={2}
           >
             <Flex align="center" gap={3}>
               <Box>{icons.logout}</Box>
@@ -288,7 +288,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
           </Button>
 
           {/* User Info */}
-          <Flex align="center" px={7} py={2}>
+          <Flex align="center" mb={4} px={7} py={2}>
             <Box 
               w="40px" 
               h="40px" 
