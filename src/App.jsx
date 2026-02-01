@@ -40,6 +40,9 @@ import ArticlesList from './assets/pages/ArticleList';
 import ArticleReview from './assets/pages/ArticleReview';
 import PublishQueue from './assets/pages/PublishQueue';
 import PublishArticle from './assets/pages/PublishArticle';
+import PublicArticles from './assets/pages/PublicArticles';
+import TopicsOfInterest from './assets/pages/TopicsOfInterest';
+import ForgotPassword from './assets/pages/ForgotPassword';
 
 
 // Sidebar component (trimmed to use only existing pages)
@@ -244,7 +247,7 @@ function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [userRole, setUserRole] = useState(localStorage.getItem('role') || 'client');
 
-  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password', '/set-initial-password'];
+  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password', '/set-initial-password', '/public-articles', '/topics-of-interest'];
   const isAuthPage = authPaths.includes(location.pathname) || location.pathname.startsWith('/reset-password');
   const showSidebar = isLoggedIn && !isAuthPage;
 
@@ -314,6 +317,9 @@ function AppContent() {
           <Route path={'/message-sent'} element={<MessageSent />} />
           <Route path={'/consultant/publish-queue'} element={<PublishQueue />} />
           <Route path={'/consultant/publish/:id'} element={<PublishArticle />} />
+          <Route path={'/public-articles'} element={<PublicArticles />} />
+          <Route path={'/topics-of-interest'} element={<TopicsOfInterest />} />
+          <Route path={'/forgot-password'} element={<ForgotPassword />} />
         </Routes>
       </Box>
     </Flex>

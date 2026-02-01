@@ -1,5 +1,5 @@
 import React from 'react'
-import logo from '../SinoStreamLogo.jpeg'
+import logo from '../logo.png'
 
 export default function AuthLayout({ title, children, leftTitle = 'SinoStream', leftLead = 'Your personal, continuous stream of curated English & Chinese news.' }) {
   const leftStyle = {
