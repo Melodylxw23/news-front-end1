@@ -50,11 +50,8 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
   const location = useLocation();
   const [isLoaded, setIsLoaded] = useState(false);
   const [animationKey, setAnimationKey] = useState(0);
+  const userName = localStorage.getItem('name') || 'User';
 
-  const slideInLeft = keyframes`
-    from { transform: translateX(-100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-  `;
   const fadeInUp = keyframes`
     from { transform: translateY(20px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
@@ -63,40 +60,129 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     from { transform: translateX(-30px); opacity: 0; }
     to { transform: translateX(0); opacity: 1; }
   `;
-  const slideInRight = keyframes`
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-  `;
-  const pulse = keyframes`
-    0% { transform: scale(1); }
-    50% { transform: scale(1.05); }
-    100% { transform: scale(1); }
-  `;
 
   useEffect(() => setIsLoaded(true), []);
   useEffect(() => { if (isLoaded) setAnimationKey(k => k + 1); }, [isCollapsed, isLoaded]);
 
+  // SVG Icons for clean line style
+  const icons = {
+    dashboard: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="7" height="9" rx="1"/>
+        <rect x="14" y="3" width="7" height="5" rx="1"/>
+        <rect x="14" y="12" width="7" height="9" rx="1"/>
+        <rect x="3" y="16" width="7" height="5" rx="1"/>
+      </svg>
+    ),
+    users: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      </svg>
+    ),
+    category: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+        <polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+    ),
+    sources: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    ),
+    broadcast: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/>
+        <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/>
+        <circle cx="12" cy="12" r="2"/>
+        <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/>
+        <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>
+      </svg>
+    ),
+    notifications: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+      </svg>
+    ),
+    settings: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    ),
+    profile: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+        <circle cx="12" cy="7" r="4"/>
+      </svg>
+    ),
+    news: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/>
+        <path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8z"/>
+      </svg>
+    ),
+    articles: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+        <polyline points="10 9 9 9 8 9"/>
+      </svg>
+    ),
+    publish: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 19V5M5 12l7-7 7 7"/>
+      </svg>
+    ),
+    logout: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+    ),
+    arrow: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="9 18 15 12 9 6"/>
+      </svg>
+    )
+  };
+
   const navItemsByRole = {
     member: [
-      { path: '/landing', label: 'Dashboard', icon: '🏠' },
-      { path: '/member/profile', label: 'My Profile', icon: '👤' }
+      { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
+      { path: '/member/profile', label: 'My Profile', icon: icons.profile }
     ],
     consultant: [
-      { path: '/landing', label: 'Dashboard', icon: '🏠' },
-      { path: '/consultant/fetch', label: 'News Fetch Dashboard', icon: '📰' },
-      {path: '/consultant/articles', label: 'Articles List', icon: '📄' },
-      {path: '/consultant/publish-queue', label: 'Publish Queue', icon: '📝' }
+      { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
+      { path: '/consultant/fetch', label: 'News Fetch Dashboard', icon: icons.news },
+      { path: '/consultant/articles', label: 'Articles List', icon: icons.articles },
+      { path: '/consultant/publish-queue', label: 'Publish Queue', icon: icons.publish }
     ],
     admin: [
-      { path: '/landing', label: 'Dashboard', icon: '🏠' },
-      { path: '/admin/users', label: 'User Management', icon: '👥' },
-      { path: '/admin/categories', label: 'Category Management', icon: '🏷️' },
-      { path: '/admin/sources', label: 'Source Management', icon: '🗂️' },
-      { path: '/admin/broadcast', label: 'Broadcast Management', icon: '📢' }
+      { path: '/admin/users', label: 'User Management', icon: icons.users },
+      { path: '/admin/categories', label: 'Category Management', icon: icons.category },
+      { path: '/admin/sources', label: 'Source Management', icon: icons.sources },
+      { path: '/admin/broadcast', label: 'Broadcast Management', icon: icons.broadcast, hasArrow: true },
+      { path: '/notification-preferences', label: 'Notifications', icon: icons.notifications },
+      { path: '/landing', label: 'Settings', icon: icons.settings }
     ]
   };
 
-  const navItems = isLoggedIn ? (navItemsByRole[userRole] || []) : [{ path: '/login', label: 'Login', icon: '🔑' }];
+  const navItems = isLoggedIn ? (navItemsByRole[userRole] || []) : [{ path: '/login', label: 'Login', icon: icons.dashboard }];
+
+  const getRoleLabel = () => {
+    if (userRole === 'admin') return 'Administrator';
+    if (userRole === 'consultant') return 'Consultant';
+    return 'Member';
+  };
 
   const NavButton = ({ item, index }) => {
     const isActive = location.pathname === item.path;
@@ -106,97 +192,124 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
         to={item.path}
         title={item.label}
         variant="ghost"
-        w={isCollapsed ? '48px' : '100%'}
+        w="100%"
         h="48px"
-        justifyContent={isCollapsed ? 'center' : 'flex-start'}
-        leftIcon={!isCollapsed ? <Box fontSize="18px" minW="20px">{item.icon}</Box> : null}
-        bg={isActive ? 'rgba(255,255,255,0.1)' : 'transparent'}
-        color={isActive ? 'white' : 'whiteAlpha.800'}
-        fontWeight={isActive ? '600' : '400'}
-        fontSize="14px"
-        borderRadius="12px"
-        _hover={{ bg: 'rgba(255,255,255,0.15)', transform: 'translateX(4px) scale(1.02)', transition: 'all 0.3s', boxShadow: '0 4px 12px rgba(0,0,0,0.15)'}}
+        justifyContent="flex-start"
+        bg={isActive ? '#A10005' : 'transparent'}
+        color={isActive ? 'white' : '#FFAAAC'}
+        fontWeight={isActive ? '500' : '400'}
+        fontSize="15px"
+        borderRadius="0"
+        px={8}
+        _hover={{ bg: '#A10005', color: 'white' }}
+        transition="all 0.2s"
       >
-        {isCollapsed ? <Box fontSize="18px">{item.icon}</Box> : <Text ml={2}>{item.label}</Text>}
+        <Flex align="center" justify="space-between" w="100%">
+          <Flex align="center" gap={3}>
+            <Box>{item.icon}</Box>
+            <Text>{item.label}</Text>
+          </Flex>
+          {item.hasArrow && <Box opacity={0.7}>{icons.arrow}</Box>}
+        </Flex>
       </Button>
     );
   };
 
   const SidebarContent = (
     <VStack spacing={0} align="stretch" h="100vh">
-      <Box px={isCollapsed ? 3 : 6} py={6} animation={isLoaded ? `${fadeInUp} 0.6s ease-out` : undefined}>
-        <Flex align="center" justify="center" mb={6} position="relative" mt={2}>
-          {!isMobile && (
-            <IconButton
-              icon={<Box fontSize="16px" fontWeight="bold">{isCollapsed ? '→' : '←'}</Box>}
-              variant="unstyled"
-              size="sm"
-              onClick={onToggle}
-              borderRadius="8px"
-              position="absolute"
-              top="-10px"
-              right={isCollapsed ? '2' : '0'}
-              zIndex="2"
-              bg="#d44d52"
-              color="white"
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              w="32px"
-              h="32px"
-              _hover={{ bg: '#e05a5f', transform: 'scale(1.1)' }}
-              boxShadow="0 2px 8px rgba(0,0,0,0.15)"
-            />
-          )}
-
-          {!isCollapsed && (
-            <VStack align="center" spacing={2} w="100%" animation={isLoaded ? `${slideInLeft} 0.8s ease-out 0.2s both` : undefined}>
-              <Flex align="center" gap={3}>
-                <Box w="130px" h="130px" display="flex" alignItems="center" justifyContent="center">
-                  <Image src="/logo.svg" alt="Logo" boxSize="130px" />
-                </Box>
-              </Flex>
-            </VStack>
-          )}
+      {/* Logo Section with darker gradient */}
+      <Box 
+        py={4} 
+        px={4}
+        bg="linear-gradient(180deg, rgba(0,0,0,0.15) 0%, transparent 100%)"
+      >
+        <Flex align="center" justify="center">
+          <Box w="120px" h="120px" display="flex" alignItems="center" justifyContent="center">
+            <Image src="/src/assets/logo.png" alt="Logo" boxSize="120px" objectFit="contain" />
+          </Box>
         </Flex>
       </Box>
 
-      <Box flex="1" position="relative" display="flex" flexDirection="column">
-        <Separator borderColor="whiteAlpha.200" animation={isLoaded ? `${slideInRight} 0.8s ease-out 0.4s both` : undefined} />
-        <Box px={isCollapsed ? 2 : 4} py={2} animation={isLoaded ? `${fadeInUp} 0.8s ease-out 0.6s both` : undefined} flex="1">
-          <VStack spacing={2} align={isCollapsed ? 'center' : 'stretch'}>
-            {navItems.map((item, index) => (
-              <Box key={`${item.path}-${animationKey}`} animation={isLoaded && !isCollapsed ? `${slideInFromLeft} 0.4s ease-out ${0.1 + index * 0.08}s both` : undefined} w="100%">
-                <NavButton item={item} index={index} />
-              </Box>
-            ))}
-          </VStack>
-        </Box>
-        
-        {isLoggedIn && (
-          <Box px={isCollapsed ? 2 : 4} pb={6} mt="auto">
-            <Button 
-              variant="unstyled"
-              size="md" 
-              w={isCollapsed ? '48px' : '100%'} 
-              h="48px" 
-              onClick={onLogout}
-              bg="#d44d52"
+      {/* Divider below logo */}
+      <Box h="1px" bg="#A10005" w="100%" />
+
+      {/* Navigation Items - Scrollable */}
+      <Box 
+        flex="1" 
+        px={0} 
+        pt={1} 
+        overflowY="auto" 
+        overflowX="hidden"
+        css={{
+          '&::-webkit-scrollbar': { display: 'none' },
+          msOverflowStyle: 'none',
+          scrollbarWidth: 'none'
+        }}
+      >
+        <VStack spacing={1} align="stretch">
+          {navItems.map((item, index) => (
+            <Box 
+              key={`${item.path}-${animationKey}`} 
+              animation={isLoaded ? `${slideInFromLeft} 0.3s ease-out ${0.05 + index * 0.05}s both` : undefined}
+            >
+              <NavButton item={item} index={index} />
+            </Box>
+          ))}
+        </VStack>
+      </Box>
+      
+      {/* Bottom Section - Logout and User Info */}
+      {isLoggedIn && (
+        <Box px={0} pb={4}>
+          {/* Divider above logout */}
+          <Box h="1px" bg="#A10005" w="100%" mb={2} />
+
+          {/* Logout Button */}
+          <Button 
+            variant="ghost"
+            w="100%" 
+            h="48px" 
+            onClick={onLogout}
+            color="#FFAAAC"
+            fontWeight="400"
+            fontSize="15px"
+            borderRadius="0"
+            justifyContent="flex-start"
+            px={9}
+            bg="transparent"
+            _hover={{ bg: '#A10005', color: 'white' }}
+            transition="all 0.2s"
+            mb={4}
+          >
+            <Flex align="center" gap={3}>
+              <Box>{icons.logout}</Box>
+              <Text>Logout</Text>
+            </Flex>
+          </Button>
+
+          {/* User Info */}
+          <Flex align="center" px={7} py={2}>
+            <Box 
+              w="40px" 
+              h="40px" 
+              borderRadius="50%" 
+              bg="rgba(255,255,255,0.2)" 
+              display="flex" 
+              alignItems="center" 
+              justifyContent="center"
               color="white"
               fontWeight="600"
-              borderRadius="12px"
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              _hover={{ bg: '#e05a5f', transform: 'translateY(-2px)' }}
-              boxShadow="0 2px 8px rgba(0,0,0,0.1)"
-              transition="all 0.2s"
+              fontSize="16px"
             >
-              {isCollapsed ? <Box>🚪</Box> : 'Logout'}
-            </Button>
-          </Box>
-        )}
-      </Box>
+              {userName.charAt(0).toUpperCase()}
+            </Box>
+            <Box ml={3}>
+              <Text color="white" fontWeight="500" fontSize="14px" lineHeight="1.3">{userName}</Text>
+              <Text color="whiteAlpha.700" fontSize="12px">{getRoleLabel()}</Text>
+            </Box>
+          </Flex>
+        </Box>
+      )}
     </VStack>
   );
 
@@ -204,7 +317,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     return (
       <Drawer isOpen={isOpen} placement="left" onClose={onClose}>
           <DrawerBackdrop />
-          <DrawerContent maxW="72vw" bg="#ba0006" borderTopRightRadius="20px" borderBottomRightRadius="20px">
+          <DrawerContent maxW="280px" bg="#ba0006" borderTopRightRadius="20px" borderBottomRightRadius="20px">
             <DrawerBody p={0}>{SidebarContent}</DrawerBody>
           </DrawerContent>
         </Drawer>
@@ -212,13 +325,19 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
   }
 
   return (
-    <Box w={isCollapsed ? '72px' : '280px'} bg="#ba0006" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s" borderTopRightRadius="20px" borderBottomRightRadius="20px">
-      {SidebarContent}
-    </Box>
-  );
-
-  return (
-    <Box w={isCollapsed ? '72px' : '280px'} bg="#ba0006" color="white" minH="100vh" position="fixed" top={0} left={0} zIndex={1000} transition="all 0.4s" borderTopRightRadius="20px" borderBottomRightRadius="20px">
+    <Box 
+      w="280px" 
+      bg="#ba0006" 
+      color="white" 
+      minH="100vh" 
+      position="fixed" 
+      top={0} 
+      left={0} 
+      zIndex={1000} 
+      transition="all 0.3s" 
+      borderTopRightRadius="20px" 
+      borderBottomRightRadius="20px"
+    >
       {SidebarContent}
     </Box>
   );
@@ -240,10 +359,6 @@ function Separator({ borderColor = 'gray.200', mb, animation, ...rest }) {
 
 function AppContent() {
   const location = useLocation();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    const saved = localStorage.getItem('sidebarCollapsed');
-    return saved !== null ? JSON.parse(saved) : false;
-  });
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [userRole, setUserRole] = useState(localStorage.getItem('role') || 'client');
 
@@ -271,27 +386,33 @@ function AppContent() {
   // navigate to landing after login
   const navigate = useNavigate();
   const handleLoginSuccessAndNavigate = (role) => { setIsLoggedIn(true); setUserRole(role); navigate('/landing'); };
-  const toggleSidebar = () => { setSidebarCollapsed(s => { const nv = !s; localStorage.setItem('sidebarCollapsed', JSON.stringify(nv)); return nv; }); };
   const handleLogout = () => { localStorage.removeItem('token'); setIsLoggedIn(false); navigate('/MemberLogin'); };
 
   const isMobile = useBreakpointValue({ base: true, md: false });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const sidebarWidth = showSidebar ? (isMobile ? 0 : (sidebarCollapsed ? 72 : 280)) : 0;
+  const sidebarWidth = showSidebar && !isMobile ? 280 : 0;
+
+  // Use cream background for all dashboard pages
+  const pageBg = '#FCF6F2';
 
   return (
-    <Flex minH="100vh" w="100vw" bgGradient="linear(to-b,rgb(198, 221, 255), #ffffff)" overflowX="hidden">
-      {showSidebar && (
-        <>
-          {isMobile && <IconButton icon={<Box fontSize="2xl">☰</Box>} variant="ghost" position="fixed" top="16px" left="16px" zIndex="1500" onClick={() => setSidebarOpen(true)} aria-label="Open menu" />}
-          {isMobile ? (
-            sidebarOpen && <Sidebar isCollapsed={false} onToggle={() => setSidebarOpen(false)} isLoggedIn={isLoggedIn} onLogout={handleLogout} isMobile={true} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} userRole={userRole} />
-          ) : (
-            <Sidebar isCollapsed={sidebarCollapsed} onToggle={toggleSidebar} isLoggedIn={isLoggedIn} onLogout={handleLogout} isMobile={false} isOpen={false} onClose={() => {}} userRole={userRole} />
-          )}
-        </>
-      )}
+    <>
+      {/* Full-page background layer to ensure #FCF6F2 is everywhere */}
+      <Box position="fixed" top={0} left={0} w="100vw" h="100vh" bg={pageBg} zIndex={-1} />
+      
+      <Flex minH="100vh" w="100vw" bg={pageBg} overflowX="hidden">
+        {showSidebar && (
+          <>
+            {isMobile && <IconButton icon={<Box fontSize="2xl">☰</Box>} variant="ghost" position="fixed" top="16px" left="16px" zIndex="1500" onClick={() => setSidebarOpen(true)} aria-label="Open menu" />}
+            {isMobile ? (
+              sidebarOpen && <Sidebar isLoggedIn={isLoggedIn} onLogout={handleLogout} isMobile={true} isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} userRole={userRole} />
+            ) : (
+              <Sidebar isLoggedIn={isLoggedIn} onLogout={handleLogout} isMobile={false} isOpen={false} onClose={() => {}} userRole={userRole} />
+            )}
+          </>
+        )}
 
-      <Box flex="1" p={isAuthPage ? 0 : 0} minH="100vh" ml={!isMobile && showSidebar ? sidebarWidth + 'px' : 0} transition="margin-left 0.3s" overflowX="hidden" maxW={!isMobile && showSidebar ? `calc(100vw - ${sidebarWidth}px)` : '100vw'}>
+      <Box flex="1" p={isAuthPage ? 0 : 0} minH="100vh" ml={sidebarWidth + 'px'} transition="margin-left 0.3s" overflowX="hidden" maxW={sidebarWidth > 0 ? `calc(100vw - ${sidebarWidth}px)` : '100vw'}>
         <Routes>
           <Route path={'/'} element={<Navigate to="/MemberLogin" replace />} />
           <Route path={'/MemberLogin'} element={<MemberLogin onLoginSuccess={handleLoginSuccessAndNavigate} />} />
@@ -323,6 +444,7 @@ function AppContent() {
         </Routes>
       </Box>
     </Flex>
+    </>
   );
 }
 
