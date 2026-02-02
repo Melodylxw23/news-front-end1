@@ -9,6 +9,7 @@ const buildHeaders = () => {
 
 const join = (path) => path.startsWith('http') ? path : `${API_BASE}${path}`
 
+
 export async function listArticles(page = 1, pageSize = 20, status = null) {
   let url = `/api/articles?page=${page}&pageSize=${pageSize}`
   if (status) url += `&status=${encodeURIComponent(status)}`
@@ -86,6 +87,15 @@ export async function batchSaveDrafts(dtos = []) {
   const res = await fetch(join(`/api/publish/batch/save`), { method: 'POST', headers: buildHeaders(), body: JSON.stringify(dtos) })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
+}
+
+// POST /api/publish/suggest - ask server to run AI analysis and return suggestions
+export async function suggestPublish(articleIds = []) {
+  if (!Array.isArray(articleIds) || articleIds.length === 0) throw new Error('articleIds required')
+  const res = await fetch(join(`/api/publish/suggest`), { method: 'POST', headers: buildHeaders(), body: JSON.stringify({ articleIds }) })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`)
+  try { return JSON.parse(text) } catch (e) { return text }
 }
 
 // Batch unpublish using /api/publish/batch/unpublish
