@@ -12,15 +12,16 @@ const palette = {
 }
 
 const styles = {
-  page: { padding: '24px 32px', background: 'transparent', minHeight: '100vh', boxSizing: 'border-box' },
-  card: { background: palette.card, padding: 18, borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.06)', boxSizing: 'border-box' },
-  sidebar: { background: palette.card, padding: 18, borderRadius: 12, boxShadow: '0 8px 30px rgba(0,0,0,0.06)' },
-  heading: { fontSize: 18, fontWeight: 700, color: '#444', marginBottom: 8 }
+  page: { padding: '12px 20px', background: 'transparent', minHeight: '100vh', boxSizing: 'border-box' },
+  card: { background: palette.card, padding: 12, borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.05)', boxSizing: 'border-box' },
+  sidebar: { background: palette.card, padding: 12, borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.05)' },
+  heading: { fontSize: 13, fontWeight: 700, color: '#444', marginBottom: 4 }
 }
 
 export default function PublishArticle() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const LAST_STATE_KEY = 'publishQueue.lastState'
   const [loading, setLoading] = useState(false)
   const [data, setData] = useState(null)
   const [dataEn, setDataEn] = useState(null)
@@ -48,6 +49,11 @@ export default function PublishArticle() {
         const pubVal = pubRes.value?.data ?? pubRes.value
         if (pubVal && Object.keys(pubVal || {}).length > 0) {
           setData(pubVal)
+          try {
+            const s = pubVal?.draft?.ScheduledAt ?? pubVal?.draft?.scheduledAt
+            if (s) setScheduledAt(formatForInput(s))
+            else setScheduledAt('')
+          } catch (e) { /* ignore */ }
         } else {
           try {
             const raw = JSON.parse(localStorage.getItem('publishQueue') || '[]')
@@ -56,7 +62,36 @@ export default function PublishArticle() {
             if (found) {
               // stored shape: { id, data: { article, draft, en, zh } }
               const entryData = found.data || found
-              setData(entryData)
+              // normalize draft taxonomy from available tag lists so UI checks (canPublish)
+              try {
+                const industriesRaw = industriesRes && industriesRes.status === 'fulfilled' ? (industriesRes.value?.data ?? industriesRes.value) : []
+                const interestsRaw = interestsRes && interestsRes.status === 'fulfilled' ? (interestsRes.value?.data ?? interestsRes.value) : []
+                const industries = Array.isArray(industriesRaw) ? industriesRaw.map(i => ({ id: i.industryTagId ?? i.IndustryTagId ?? i.industryId ?? i.industryId ?? i.id, IndustryTagId: i.industryTagId ?? i.IndustryTagId ?? i.id, NameEN: i.nameEN ?? i.NameEN ?? i.Name ?? '', NameZH: i.nameZH ?? i.NameZH ?? i.Name ?? '' })) : []
+                const interests = Array.isArray(interestsRaw) ? interestsRaw.map(i => ({ id: i.interestTagId ?? i.InterestTagId ?? i.id, InterestTagId: i.interestTagId ?? i.InterestTagId ?? i.id, NameEN: i.nameEN ?? i.NameEN ?? i.Name ?? '', NameZH: i.nameZH ?? i.NameZH ?? i.Name ?? '' })) : []
+                const normalized = { ...(entryData || {}) }
+                const d = normalized.draft || {}
+                // normalize IndustryTagId and attach IndustryTag object when possible
+                const iid = d.IndustryTagId ?? d.IndustryTag?.IndustryTagId ?? d.IndustryTag?.id
+                if (typeof iid !== 'undefined' && iid !== null && iid !== '') {
+                  const num = Number(iid)
+                  if (!Number.isNaN(num)) {
+                    normalized.draft = { ...(normalized.draft || {}), IndustryTagId: num }
+                    const foundInd = industries.find(x => String(x.id) === String(num) || String(x.IndustryTagId) === String(num))
+                    if (foundInd) normalized.draft.IndustryTag = foundInd
+                  }
+                }
+                // normalize InterestTagIds -> InterestTags
+                const itIds = Array.isArray(d.InterestTagIds) ? d.InterestTagIds.map(x => Number(x)).filter(x => !Number.isNaN(x)) : (Array.isArray(d.InterestTags) && d.InterestTags.length ? d.InterestTags.map(t => (t.InterestTagId ?? t.id)).map(x => Number(x)).filter(x => !Number.isNaN(x)) : [])
+                if (itIds && itIds.length > 0) {
+                  const uniq = Array.from(new Set(itIds.map(x => String(x)))).map(x => Number(x))
+                  normalized.draft = { ...(normalized.draft || {}), InterestTagIds: uniq }
+                  const objs = uniq.map(id => interests.find(x => String(x.id ?? x.InterestTagId) === String(id))).filter(Boolean)
+                  if (objs.length > 0) normalized.draft.InterestTags = objs
+                }
+                setData(normalized)
+              } catch (e) {
+                setData(entryData)
+              }
             } else {
               setData(pubVal)
             }
@@ -65,8 +100,8 @@ export default function PublishArticle() {
           }
         }
       }
-      if (enRes.status === 'fulfilled') setDataEn(enRes.value)
-      if (zhRes.status === 'fulfilled') setDataZh(zhRes.value)
+      if (enRes.status === 'fulfilled') setDataEn(enRes.value?.data ?? enRes.value)
+      if (zhRes.status === 'fulfilled') setDataZh(zhRes.value?.data ?? zhRes.value)
       // attach industry/interest lists to data for use in UI
       if (industriesRes && industriesRes.status === 'fulfilled') {
         const listRaw = industriesRes.value?.data ?? industriesRes.value
@@ -177,12 +212,11 @@ export default function PublishArticle() {
 
     const collect = (keys) => {
       const vals = []
-      for (const k of keys) {
-        vals.push(d?.[k])
-      }
-      for (const k of keys) {
-        vals.push(a?.[k])
-      }
+      for (const k of keys) vals.push(d?.[k])
+      for (const k of keys) vals.push(a?.[k])
+      // also consider article payloads fetched separately for language views
+      for (const k of keys) vals.push(dataEn?.[k])
+      for (const k of keys) vals.push(dataZh?.[k])
       return vals.map(first).filter(Boolean)
     }
 
@@ -200,6 +234,31 @@ export default function PublishArticle() {
 
     return { en: pick(enCandidates), zh: pick(zhCandidates) }
   }
+  
+  const formatForInput = (s) => {
+    if (!s) return ''
+    try {
+      const d = new Date(s)
+      if (Number.isNaN(d.getTime())) return ''
+      const pad = (n) => String(n).padStart(2, '0')
+      const yyyy = d.getFullYear()
+      const mm = pad(d.getMonth() + 1)
+      const dd = pad(d.getDate())
+      const hh = pad(d.getHours())
+      const min = pad(d.getMinutes())
+      return `${yyyy}-${mm}-${dd}T${hh}:${min}`
+    } catch (e) { return '' }
+  }
+
+  useEffect(() => {
+    try {
+      const s = data?.draft?.ScheduledAt ?? data?.draft?.scheduledAt
+      if (s) {
+        const formatted = formatForInput(s)
+        if (formatted) setScheduledAt(formatted)
+      }
+    } catch (e) { /* ignore */ }
+  }, [data?.draft?.ScheduledAt, data?.draft?.scheduledAt])
 
   const heroUrl = () => {
     return data?.draft?.HeroImageUrl ?? data?.article?.HeroImageUrl ?? ''
@@ -249,8 +308,18 @@ export default function PublishArticle() {
       }
       const url = normalizeUrl(res)
       if (url) {
+        // update client state
         setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), HeroImageUrl: url, HeroImageSource: 'generated' } }))
         showToast('Generated hero image')
+        // best-effort persist generated hero to server so it survives scheduling/publish and reloads
+        try {
+          const dto = { NewsArticleId: Number(id), HeroImageUrl: url, HeroImageSource: 'generated' }
+          const saved = await patchPublishDraft(id, dto)
+          const returned = saved?.draft || saved
+          if (returned) setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), ...returned } }))
+        } catch (e) {
+          // ignore persistence errors but keep the generated hero in the client state
+        }
       } else {
         showToast('Image generation returned no URL', 'error')
       }
@@ -288,7 +357,9 @@ export default function PublishArticle() {
         TitleEN: data?.draft?.TitleEN ?? dataEn?.titleEN ?? dataEn?.Title ?? dataEn?.title ?? null,
         TitleZH: data?.draft?.TitleZH ?? dataZh?.titleZH ?? dataZh?.Title ?? dataZh?.title ?? null,
         IndustryTagId: data?.draft?.IndustryTagId ?? data?.draft?.IndustryTag?.IndustryTagId ?? null,
-        InterestTagIds: (data?.draft?.InterestTags || []).map(t => t.InterestTagId ?? t.id).filter(Boolean),
+        InterestTagIds: Array.isArray(data?.draft?.InterestTagIds)
+          ? (data?.draft?.InterestTagIds || []).filter(Boolean)
+          : ((data?.draft?.InterestTags || []).map(t => t.InterestTagId ?? t.id).filter(Boolean)),
         // Do NOT set ScheduledAt here — scheduling must be done via the Publish (Schedule) action
         ScheduledAt: null
       }
@@ -348,21 +419,42 @@ export default function PublishArticle() {
           filtered.push(newEntry)
           localStorage.setItem('publishQueue', JSON.stringify(filtered))
         } catch (inner) { /* ignore localStorage errors */ }
+        try { localStorage.setItem(LAST_STATE_KEY, JSON.stringify({ tab: 'drafted', page: 1 })) } catch (e) {}
         showToast('Draft saved')
-        setTimeout(() => navigate('/consultant/publish-queue?tab=drafted'), 600)
+        setTimeout(() => navigate('/consultant/publish-queue'), 600)
     } catch (e) {
       showToast('Save draft failed: ' + (e.message || e), 'error')
     } finally { setLoading(false) }
   }
 
-  const handlePublish = async () => {
-    if (!window.confirm(publishMode === 'now' ? 'Publish this article now?' : 'Schedule this article?')) return
+  const handlePublish = async (modeOverride) => {
+    const mode = modeOverride || publishMode
+    const _lsEntryForPublish = (() => {
+      try {
+        const raw = JSON.parse(localStorage.getItem('publishQueue') || '[]')
+        const entries = Array.isArray(raw) ? raw : []
+        const found = entries.find(e => Number(e?.id ?? e) === Number(id))
+        return (found && found.data) ? found.data : null
+      } catch (e) { return null }
+    })()
     try {
       setLoading(true)
       // ensure required taxonomy present before calling publish; server also validates this
       const draft = data?.draft || {}
-      const interestIds = (draft.InterestTags || []).map(t => t.InterestTagId ?? t.id).filter(Boolean)
+      // support both InterestTagIds (array of ids) and InterestTags (array of objects)
+      const draftInterestIds = Array.isArray(draft?.InterestTagIds)
+        ? (draft.InterestTagIds || [])
+        : (Array.isArray(draft?.InterestTags) ? (draft.InterestTags || []).map(t => t.InterestTagId ?? t.id).filter(Boolean) : [])
+      const interestIds = (draftInterestIds || []).filter(Boolean)
       const industryId = draft.IndustryTagId ?? draft.IndustryTag?.IndustryTagId ?? draft.IndustryTag?.id ?? null
+      const hero = (data?.draft?.HeroImageUrl) || (data?.article?.HeroImageUrl) || null
+
+      if (!hero) {
+        showToast('A Hero Image is required before publishing or scheduling', 'error')
+        setLoading(false)
+        return
+      }
+
       if (!industryId || interestIds.length === 0) {
         showToast('Industry and at least one Topic of Interest are required to publish', 'error')
         setLoading(false)
@@ -370,9 +462,22 @@ export default function PublishArticle() {
       }
 
       // If the consultant selected Draft mode, perform a saveDraft instead of publishing.
-      if (publishMode === 'draft') {
+      if (mode === 'draft') {
         // ensure draft fields include taxonomy
         await saveDraft()
+        return
+      }
+
+      // If scheduling, require a scheduled datetime
+      if (mode === 'schedule' && !scheduledAt) {
+        showToast('Please choose a date and time to schedule', 'error')
+        setLoading(false)
+        return
+      }
+
+      // confirmations after validation
+      if (!window.confirm(mode === 'now' ? 'Publish this article now?' : 'Schedule this article?')) {
+        setLoading(false)
         return
       }
 
@@ -390,8 +495,10 @@ export default function PublishArticle() {
             TitleEN: data?.draft?.TitleEN ?? dataEn?.titleEN ?? dataEn?.Title ?? dataEn?.title ?? null,
             TitleZH: data?.draft?.TitleZH ?? dataZh?.titleZH ?? dataZh?.Title ?? dataZh?.title ?? null,
             IndustryTagId: data?.draft?.IndustryTagId ?? data?.draft?.IndustryTag?.IndustryTagId ?? null,
-            InterestTagIds: (data?.draft?.InterestTags || []).map(t => t.InterestTagId ?? t.id).filter(Boolean),
-            ScheduledAt: publishMode === 'now' ? null : (scheduledAt || null)
+            InterestTagIds: Array.isArray(data?.draft?.InterestTagIds)
+              ? (data?.draft?.InterestTagIds || []).filter(Boolean)
+              : ((data?.draft?.InterestTags || []).map(t => t.InterestTagId ?? t.id).filter(Boolean)),
+            ScheduledAt: mode === 'now' ? null : (scheduledAt || null)
           }
           const saved = await patchPublishDraft(id, dtoForDraft)
           try { console.debug('[publish] patchPublishDraft response:', saved) } catch (e) {}
@@ -438,19 +545,44 @@ export default function PublishArticle() {
         }
       }
 
+      // Ensure server draft contains the hero and taxonomy fields so scheduling/publishing
+      // does not lose the HeroImageUrl when the client-side draft came from localStorage.
+      try {
+        const ensureDto = {
+          NewsArticleId: Number(id),
+          HeroImageUrl: data?.draft?.HeroImageUrl ?? data?.article?.HeroImageUrl ?? null,
+          HeroImageAlt: data?.draft?.HeroImageAlt ?? null,
+          HeroImageSource: data?.draft?.HeroImageSource ?? null,
+          TitleEN: data?.draft?.TitleEN ?? dataEn?.titleEN ?? dataEn?.Title ?? dataEn?.title ?? null,
+          TitleZH: data?.draft?.TitleZH ?? dataZh?.titleZH ?? dataZh?.Title ?? dataZh?.title ?? null,
+          IndustryTagId: data?.draft?.IndustryTagId ?? data?.draft?.IndustryTag?.IndustryTagId ?? null,
+          InterestTagIds: Array.isArray(data?.draft?.InterestTagIds)
+            ? (data?.draft?.InterestTagIds || []).filter(Boolean)
+            : ((data?.draft?.InterestTags || []).map(t => t.InterestTagId ?? t.id).filter(Boolean)),
+          ScheduledAt: mode === 'now' ? null : (scheduledAt || null)
+        }
+        const savedEnsure = await patchPublishDraft(id, ensureDto)
+        const returnedEnsure = savedEnsure?.draft || savedEnsure
+        if (returnedEnsure) {
+          setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), ...returnedEnsure } }))
+        }
+      } catch (e) {
+        // ignore; best-effort to persist hero/taxonomy before publish
+      }
+
       // send both casing variants (server may expect different shapes)
       const normalizedInterestIds = interestIds.map(x => Number(x)).filter(x => !Number.isNaN(x))
       const body = {
         // canonical (PascalCase) used elsewhere
         NewsArticleId: Number(id),
         Action: 'publish',
-        ScheduledAt: publishMode === 'now' ? null : (scheduledAt || null),
+        ScheduledAt: mode === 'now' ? null : (scheduledAt || null),
         IndustryTagId: industryId,
         InterestTagIds: normalizedInterestIds,
         // lowercase/camelCase duplicates to satisfy alternate server expectations
         newsArticleId: Number(id),
         action: 'publish',
-        scheduledAt: publishMode === 'now' ? null : (scheduledAt || null),
+        scheduledAt: mode === 'now' ? null : (scheduledAt || null),
         industryTagId: industryId,
         interestTagIds: normalizedInterestIds
       }
@@ -476,6 +608,12 @@ export default function PublishArticle() {
           draft: latestDraft?.draft ?? latestDraft?.draft ?? latestDraft
         }
         setData(mergedData)
+        // update schedule input to reflect server-returned scheduled time after scheduling/rescheduling
+        try {
+          const newSched = mergedData?.draft?.ScheduledAt ?? mergedData?.draft?.scheduledAt
+          if (newSched) setScheduledAt(formatForInput(newSched))
+          else setScheduledAt('')
+        } catch (e) { /* ignore */ }
 
         // update client-side publishQueue entry to include article so PublishQueue.isLive() becomes true
             try {
@@ -488,24 +626,31 @@ export default function PublishArticle() {
           // overlay mergedData.draft with any client selections so Industry/Interest persist
           const clientDraft = data?.draft || {}
           const mergedDraft = { ...(prevDraft || {}), ...(mergedData?.draft || {}) }
+          // preserve hero image from client draft/article/localStorage when server response lacks it
+          try {
+            mergedDraft.HeroImageUrl = mergedDraft.HeroImageUrl || clientDraft.HeroImageUrl || data?.article?.HeroImageUrl || (_lsEntryForPublish && _lsEntryForPublish.draft && _lsEntryForPublish.draft.HeroImageUrl) || mergedDraft.HeroImageUrl
+          } catch (e) { /* ignore */ }
           if (clientDraft.IndustryTag) mergedDraft.IndustryTag = clientDraft.IndustryTag
           if (clientDraft.IndustryTagId) mergedDraft.IndustryTagId = clientDraft.IndustryTagId
           if (clientDraft.InterestTags) mergedDraft.InterestTags = clientDraft.InterestTags
+          if (clientDraft.InterestTagIds) mergedDraft.InterestTagIds = clientDraft.InterestTagIds
           // ensure article record indicates published state so PublishQueue treats it as Live
           try {
-                if (publishMode === 'now') {
+                if (mode === 'now') {
                   const publishedAt = new Date().toISOString()
                   // write both casings for robustness across UI/server shapes
-                  if (!articleObj.PublishedAt) articleObj.PublishedAt = publishedAt
-                  if (!articleObj.publishedAt) articleObj.publishedAt = publishedAt
+                  articleObj.PublishedAt = publishedAt
+                  articleObj.publishedAt = publishedAt
                   articleObj.IsPublished = true
                   articleObj.isPublished = true
-                  mergedDraft.PublishedAt = mergedDraft.PublishedAt || publishedAt
-                  mergedDraft.publishedAt = mergedDraft.publishedAt || publishedAt
-                } else if (publishMode === 'schedule' && scheduledAt) {
+                  mergedDraft.PublishedAt = publishedAt
+                  mergedDraft.publishedAt = publishedAt
+                  // clear any scheduled markers so item appears as Published
+                  try { delete mergedDraft.ScheduledAt; delete mergedDraft.scheduledAt } catch (e) {}
+                } else if (mode === 'schedule' && scheduledAt) {
                   // mark scheduled time on draft so it appears under Scheduled
-                  mergedDraft.ScheduledAt = mergedDraft.ScheduledAt || scheduledAt
-                  mergedDraft.scheduledAt = mergedDraft.scheduledAt || scheduledAt
+                  mergedDraft.ScheduledAt = scheduledAt
+                  mergedDraft.scheduledAt = scheduledAt
                 }
           } catch (e) { /* ignore timestamp setting errors */ }
 
@@ -517,8 +662,9 @@ export default function PublishArticle() {
       } catch (e) {
         // ignore refresh error
       }
+      try { const target = mode === 'now' ? 'published' : 'scheduled'; localStorage.setItem(LAST_STATE_KEY, JSON.stringify({ tab: target, page: 1 })) } catch (e) {}
       showToast('Published')
-      setTimeout(() => navigate(`/consultant/publish-queue?tab=${publishMode === 'now' ? 'live' : 'scheduled'}`), 800)
+      setTimeout(() => navigate('/consultant/publish-queue'), 800)
     } catch (e) {
       showToast('Publish failed: ' + (e.message || e), 'error')
     } finally { setLoading(false) }
@@ -579,6 +725,22 @@ export default function PublishArticle() {
   const title = { en: displayTitleEN, zh: displayTitleZH }
   const summary = { en: summaryEN, zh: summaryZH }
 
+  // computed publish readiness
+  const draft = data?.draft || {}
+  // also consider client-side publishQueue localStorage entry as a fallback
+  const _lsEntry = (() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('publishQueue') || '[]')
+      const entries = Array.isArray(raw) ? raw : []
+      const found = entries.find(e => Number(e?.id ?? e) === Number(id))
+      return (found && found.data) ? found.data : null
+    } catch (e) { return null }
+  })()
+  const hasHero = Boolean(draft.HeroImageUrl || data?.article?.HeroImageUrl || (_lsEntry && _lsEntry.draft && _lsEntry.draft.HeroImageUrl))
+  const industryIdCurrent = draft.IndustryTagId ?? draft.IndustryTag?.IndustryTagId ?? draft.IndustryTag?.id ?? data?.article?.IndustryTagId ?? (_lsEntry && _lsEntry.draft && _lsEntry.draft.IndustryTagId) ?? null
+  const interestCount = (Array.isArray(draft.InterestTagIds) && draft.InterestTagIds.length) || (Array.isArray(draft.InterestTags) && draft.InterestTags.length) || (Array.isArray(_lsEntry?.draft?.InterestTagIds) && _lsEntry.draft.InterestTagIds.length) || (Array.isArray(_lsEntry?.draft?.InterestTags) && _lsEntry.draft.InterestTags.length) || 0
+  const canPublish = Boolean(hasHero && industryIdCurrent && interestCount > 0)
+
   const getDisplayName = (item) => {
     if (!item) return ''
     return item.NameEN || item.Name || item.TitleEN || item.title || item.name || item.NameZH || item.Name || ''
@@ -605,206 +767,161 @@ export default function PublishArticle() {
     <div className="content-full">
       <div className="page-inner">
         <div style={styles.page}>
-          <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700 }}>Publish Article</h1>
-              <div style={{ color: '#777', marginTop: 6 }}>Article publish controls and content preview</div>
+          <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <h1 style={{ fontSize: 18, margin: 0, fontWeight: 700 }}>Publish Article</h1>
+              <span style={{ color: '#999', fontSize: 12 }}>#{id}</span>
             </div>
-            <div>
-              <button onClick={() => navigate(-1)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e6e6e6', background: '#fff' }}>Back</button>
-            </div>
+            <button onClick={() => navigate('/consultant/publish-queue')} style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e6e6e6', background: '#fff', fontSize: 12 }}>Back</button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 18 }}>
-            <div style={styles.card}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <div style={{ fontWeight: 700 }}>Article</div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => setLang('en')} style={{ padding: '6px 10px', borderRadius: 6, background: lang === 'en' ? '#c92b2b' : '#f5f5f5', color: lang === 'en' ? 'white' : '#444', border: 'none' }}>EN</button>
-                  <button onClick={() => setLang('zh')} style={{ padding: '6px 10px', borderRadius: 6, background: lang === 'zh' ? '#c92b2b' : '#f5f5f5', color: lang === 'zh' ? 'white' : '#444', border: 'none' }}>ZH</button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 12, height: 'calc(100vh - 90px)' }}>
+            <div style={{ ...styles.card, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>Article Preview</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button onClick={() => setLang('en')} style={{ padding: '4px 8px', borderRadius: 4, background: lang === 'en' ? '#c92b2b' : '#f5f5f5', color: lang === 'en' ? 'white' : '#444', border: 'none', fontSize: 11 }}>EN</button>
+                  <button onClick={() => setLang('zh')} style={{ padding: '4px 8px', borderRadius: 4, background: lang === 'zh' ? '#c92b2b' : '#f5f5f5', color: lang === 'zh' ? 'white' : '#444', border: 'none', fontSize: 11 }}>ZH</button>
                 </div>
               </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>{lang === 'en' ? 'Title (EN)' : 'Title (ZH)'}</div>
-                <div style={{ padding: 10, borderRadius: 8, border: '1px solid #eee', background: '#fff', minHeight: 44, whiteSpace: 'pre-wrap' }}>{lang === 'en' ? (title.en || '—') : (title.zh || '—')}</div>
+              <div style={{ marginBottom: 6, flexShrink: 0 }}>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Title</div>
+                <div style={{ padding: 6, borderRadius: 6, border: '1px solid #eee', background: '#fafafa', fontSize: 13, fontWeight: 600 }}>{lang === 'en' ? (title.en || '—') : (title.zh || '—')}</div>
               </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>{lang === 'en' ? 'Summary (EN)' : 'Summary (ZH)'}</div>
-                <div style={{ padding: 10, borderRadius: 8, border: '1px solid #eee', background: '#fff', minHeight: 80, whiteSpace: 'pre-wrap' }}>{lang === 'en' ? (summary.en || '—') : (summary.zh || '—')}</div>
+              <div style={{ marginBottom: 6, flexShrink: 0 }}>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Summary</div>
+                <div style={{ padding: 6, borderRadius: 6, border: '1px solid #eee', background: '#fafafa', fontSize: 12, maxHeight: 60, overflow: 'auto' }}>{lang === 'en' ? (summary.en || '—') : (summary.zh || '—')}</div>
               </div>
 
-
-              <div>
-                <div style={{ fontSize: 13, color: '#666', marginBottom: 6 }}>Content</div>
-                <div style={{ whiteSpace: 'pre-wrap', padding: 12, border: '1px solid #eee', borderRadius: 8, minHeight: 220, color: '#222' }}>{lang === 'en' ? full.en : full.zh}</div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Content</div>
+                <div style={{ whiteSpace: 'pre-wrap', padding: 8, border: '1px solid #eee', borderRadius: 6, flex: 1, overflow: 'auto', fontSize: 12, color: '#333', background: '#fafafa' }}>{lang === 'en' ? full.en : full.zh}</div>
               </div>
             </div>
 
-            <div style={styles.sidebar}>
-              <div style={{ marginBottom: 12 }}>
+            <div style={{ ...styles.sidebar, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
+              <div style={{ marginBottom: 8 }}>
                 <div style={styles.heading}>Publish Controls</div>
-                <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>Article Checklist</div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-                  <div style={{ padding: '6px 10px', borderRadius: 20, background: '#f5fdf8', border: '1px solid #e6f2ea', color: '#1e7a3a' }}>Article Content: ZH ✓</div>
-                  <div style={{ padding: '6px 10px', borderRadius: 20, background: '#f5fdf8', border: '1px solid #eee', color: '#1e7a3a' }}>Article Content: EN ✓</div>
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                  <span style={{ padding: '3px 8px', borderRadius: 12, background: '#f0fdf4', fontSize: 10, color: '#16a34a' }}>ZH ✓</span>
+                  <span style={{ padding: '3px 8px', borderRadius: 12, background: '#f0fdf4', fontSize: 10, color: '#16a34a' }}>EN ✓</span>
                 </div>
               </div>
 
-              <div style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: 8 }}>
                 <div style={styles.heading}>Hero Image</div>
                 {displayedHeroUrl ? (
-                  <div style={{ background: '#fafafa', padding: 10, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <img
-                      src={displayedHeroUrl}
-                      alt="hero"
-                      style={{ width: 120, height: 68, objectFit: 'cover', borderRadius: 6 }}
-                      onError={(e) => {
-                        console.error('Hero image load failed for', displayedHeroUrl, e)
-                        // hide the broken image
-                        e.currentTarget.style.display = 'none'
-                      }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13 }}>{displayedHeroUrl.split('/').pop()}</div>
-                      <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
-                        <button
-                          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #1976d2', background: '#1976d2', color: '#fff', cursor: 'pointer' }}
-                          onClick={() => requestGenerateHeroImage()}
-                          disabled={loading}
-                          title="Generate hero image via backend AI service"
-                        >
-                          {loading ? 'Generating…' : 'Generate Image'}
-                        </button>
-
-                        <button
-                          style={{ background: 'transparent', color: '#c92b2b', border: 'none', cursor: 'pointer' }}
-                          onClick={() => {
-                            const d = { ...(data?.draft || {}) };
-                            d.HeroImageUrl = null;
-                            d.HeroImageSource = null;
-                            setData({ ...(data || {}), draft: d });
-                            showToast('Hero image removed');
-                          }}
-                        >
-                          Remove
-                        </button>
-
-                        <button
-                          style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #999', background: '#fff', cursor: 'pointer' }}
-                          onClick={() => window.open(displayedHeroUrl, '_blank')}
-                        >
-                          Open
-                        </button>
-                      </div>
+                  <div style={{ background: '#fafafa', padding: 6, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <img src={displayedHeroUrl} alt="hero" style={{ width: 60, height: 40, objectFit: 'cover', borderRadius: 4 }} onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                    <div style={{ flex: 1, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <button style={{ padding: '3px 6px', borderRadius: 4, background: '#1976d2', color: '#fff', border: 'none', fontSize: 10, cursor: 'pointer' }} onClick={() => requestGenerateHeroImage()} disabled={loading}>{loading ? '...' : 'Generate'}</button>
+                      <button style={{ padding: '3px 6px', borderRadius: 4, background: '#fff', color: '#c92b2b', border: '1px solid #fcc', fontSize: 10, cursor: 'pointer' }} onClick={() => { const d = { ...(data?.draft || {}) }; d.HeroImageUrl = null; d.HeroImageSource = null; setData({ ...(data || {}), draft: d }); showToast('Removed'); }}>Remove</button>
                     </div>
                   </div>
                 ) : (
-                  <div style={{ padding: 12, border: '1px dashed #eee', borderRadius: 8, color: '#999', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div>No hero image</div>
-                    <div>
-                      <button
-                        style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #1976d2', background: '#1976d2', color: '#fff', cursor: 'pointer' }}
-                        onClick={() => requestGenerateHeroImage()}
-                        disabled={loading}
-                        title="Generate hero image via backend AI service"
-                      >
-                        {loading ? 'Generating…' : 'Generate Image'}
-                      </button>
-                    </div>
+                  <div style={{ padding: 8, border: '1px dashed #ddd', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#999', fontSize: 11 }}>No image</span>
+                    <button style={{ padding: '3px 6px', borderRadius: 4, background: '#1976d2', color: '#fff', border: 'none', fontSize: 10, cursor: 'pointer' }} onClick={() => requestGenerateHeroImage()} disabled={loading}>{loading ? '...' : 'Generate'}</button>
                   </div>
                 )}
               </div>
 
-              <div style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: 8 }}>
                 <div style={styles.heading}>Industry</div>
                 {(() => {
                   const industries = data?.industries || data?.IndustryTags || data?.industryTags || data?.industriesList || []
                   const current = data?.draft?.IndustryTagId ?? data?.draft?.IndustryTag?.IndustryTagId ?? data?.draft?.IndustryTag?.id ?? ''
                   if (industries && industries.length > 0) {
                     return (
-                      <select
-                        value={String(current)}
-                        onChange={e => {
-                          const val = e.target.value
-                          const picked = industries.find(x => String(x.id) === val || String(x.IndustryTagId ?? x.id) === val)
-                          setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), IndustryTag: picked || null, IndustryTagId: picked ? (picked.IndustryTagId ?? picked.id) : null } }))
-                        }}
-                        style={{ padding: '10px', borderRadius: 8, border: '1px solid #eee', width: '100%' }}
-                      >
+                      <select value={String(current)} onChange={e => { const val = e.target.value; const picked = industries.find(x => String(x.id) === val || String(x.IndustryTagId ?? x.id) === val); setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), IndustryTag: picked || null, IndustryTagId: picked ? (picked.IndustryTagId ?? picked.id) : null } })) }} style={{ padding: '6px', borderRadius: 6, border: '1px solid #ddd', width: '100%', fontSize: 12 }}>
                         <option value=''>Unassigned</option>
-                        {industries.map((it, i) => (
-                          <option key={i} value={String(it.id ?? it.IndustryTagId)}>{getDisplayName(it) || String(it.id ?? it.IndustryTagId)}</option>
-                        ))}
+                        {industries.map((it, i) => (<option key={i} value={String(it.id ?? it.IndustryTagId)}>{getDisplayName(it) || String(it.id ?? it.IndustryTagId)}</option>))}
                       </select>
                     )
                   }
-                  return <div style={{ padding: '10px', borderRadius: 8, border: '1px solid #eee' }}>{getDisplayName(data?.draft?.IndustryTag) || 'Unassigned'}</div>
+                  const fallbackId = data?.draft?.IndustryTagId ?? data?.draft?.IndustryTag?.IndustryTagId ?? data?.draft?.IndustryTag?.id
+                  const attachedList = data?.industries || []
+                  if (fallbackId || fallbackId === 0) { const found = attachedList.find(x => String(x.id ?? x.IndustryTagId ?? x.industryTagId) === String(fallbackId)); const name = found ? (found.NameEN || found.NameZH || found.Name || found.name || String(fallbackId)) : (getDisplayName(data?.draft?.IndustryTag) || String(fallbackId)); return <div style={{ padding: '6px', borderRadius: 6, border: '1px solid #ddd', fontSize: 12 }}>{name}</div> }
+                  return <div style={{ padding: '6px', borderRadius: 6, border: '1px solid #ddd', fontSize: 12, color: '#999' }}>{getDisplayName(data?.draft?.IndustryTag) || 'Unassigned'}</div>
                 })()}
               </div>
 
-              <div style={{ marginBottom: 12 }}>
+              <div style={{ marginBottom: 8 }}>
                 <div style={styles.heading}>Topics Of Interest</div>
                 {(() => {
                   const interests = data?.interests || data?.InterestTags || data?.interestTags || []
-                  const selected = (data?.draft?.InterestTags || []).map(t => String(t.InterestTagId ?? t.id ?? t.id))
+                  const draft = data?.draft || {}
+                  const draftInterestIds = Array.isArray(draft?.InterestTagIds) ? draft.InterestTagIds.map(x => String(x)) : (Array.isArray(draft?.InterestTags) ? draft.InterestTags.map(t => String(t.InterestTagId ?? t.id)) : [])
                   if (interests && interests.length > 0) {
                     return (
-                      <div style={{ display: 'flex', gap: 8, flexDirection: 'column' }}>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 100, overflow: 'auto' }}>
                         {interests.map((it, idx) => {
-                          const idStr = String(it.id ?? it.InterestTagId)
-                          const checked = selected.includes(idStr)
+                          const idVal = it.interestTagId ?? it.InterestTagId ?? it.id
+                          const idStr = String(idVal)
+                          const checked = draftInterestIds.includes(idStr)
                           return (
-                            <label key={idx} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={e => {
-                                  const cur = (data?.draft?.InterestTags || []).slice()
-                                  if (e.target.checked) {
-                                    cur.push(it)
-                                  } else {
-                                    const idx = cur.findIndex(x => String(x.InterestTagId ?? x.id) === idStr)
-                                    if (idx >= 0) cur.splice(idx, 1)
-                                  }
-                                  setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), InterestTags: cur } }))
-                                }}
-                              />
-                              <div style={{ padding: '6px 10px', borderRadius: 12, background: checked ? '#fff4f4' : '#fff', color: '#c92b2b' }}>{getDisplayName(it) || idStr}</div>
+                            <label key={idx} style={{ display: 'flex', gap: 4, alignItems: 'center', padding: '3px 6px', borderRadius: 10, background: checked ? '#fee2e2' : '#f5f5f5', border: checked ? '1px solid #fca5a5' : '1px solid #e5e5e5', cursor: 'pointer', fontSize: 11 }}>
+                              <input type="checkbox" checked={checked} style={{ width: 12, height: 12 }} onChange={e => { const curIds = Array.isArray(draft?.InterestTagIds) ? (draft.InterestTagIds || []).slice() : (Array.isArray(draft?.InterestTags) ? (draft.InterestTags || []).map(t => (t.InterestTagId ?? t.id)) : []); const sid = idVal; if (e.target.checked) { curIds.push(sid) } else { const i = curIds.findIndex(x => String(x) === idStr); if (i >= 0) curIds.splice(i, 1) }; const normalizedIds = Array.from(new Set(curIds.map(x => String(x)))).map(x => Number(x)).filter(x => !Number.isNaN(x)); const curObjs = normalizedIds.map(id => interests.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id))).filter(Boolean); setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), InterestTagIds: normalizedIds, InterestTags: curObjs } })) }} />
+                              <span style={{ color: checked ? '#b91c1c' : '#666' }}>{getDisplayName(it) || idStr}</span>
                             </label>
                           )
                         })}
                       </div>
                     )
                   }
-                  return <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{(data?.draft?.InterestTags || []).map((t, i) => (<div key={i} style={{ padding: '6px 10px', borderRadius: 12, background: '#fff4f4', color: '#c92b2b' }}>{t.NameEN ?? t.NameZH ?? t.Name ?? t.name}</div>))}</div>
+                  const fallbackNames = []; if (Array.isArray(draft?.InterestTags) && draft.InterestTags.length > 0) { for (const t of draft.InterestTags) fallbackNames.push(t.NameEN ?? t.NameZH ?? t.Name ?? t.name ?? String(t.InterestTagId ?? t.id)) } else if (Array.isArray(draft?.InterestTagIds) && draft.InterestTagIds.length > 0) { const list = data?.interests || []; for (const id of draft.InterestTagIds) { const found = list.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id)); fallbackNames.push(found ? (found.NameEN || found.NameZH || found.Name || found.name || String(id)) : String(id)) } }
+                  return <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{fallbackNames.map((n, i) => (<span key={i} style={{ padding: '3px 6px', borderRadius: 10, background: '#fee2e2', fontSize: 11, color: '#b91c1c' }}>{n}</span>))}</div>
                 })()}
               </div>
 
-              <div style={{ marginBottom: 12 }}>
-                <div style={styles.heading}>Attach Assets</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" defaultChecked /> Text Summary</label>
-                </div>
-              </div>
+              <div style={{ marginTop: 'auto', paddingTop: 8, borderTop: '1px solid #eee' }}>
+                <div style={styles.heading}>Actions</div>
+                
+                {/* Save as Draft */}
+                <button 
+                  onClick={saveDraft} 
+                  style={{ width: '100%', background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '8px 10px', borderRadius: 6, fontSize: 11, fontWeight: 500, marginBottom: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                >
+                  <span>💾</span> Save as Draft
+                </button>
 
-              <div style={{ marginBottom: 12 }}>
-                <div style={styles.heading}>Publish Timing</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                  <label><input type="radio" name="timing" checked={publishMode === 'now'} onChange={() => setPublishMode('now')} /> Publish Now</label>
-                  <label><input type="radio" name="timing" checked={publishMode === 'schedule'} onChange={() => setPublishMode('schedule')} /> Schedule</label>
-                  <label><input type="radio" name="timing" checked={publishMode === 'draft'} onChange={() => setPublishMode('draft')} /> Draft</label>
+                {/* Schedule */}
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 6, padding: 8, marginBottom: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                    <span>📅</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: '#92400e' }}>Schedule for later</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <input 
+                      type="datetime-local" 
+                      value={scheduledAt} 
+                      onChange={e => setScheduledAt(e.target.value)} 
+                      style={{ flex: 1, padding: 6, borderRadius: 4, border: '1px solid #ddd', fontSize: 11 }} 
+                    />
+                    <button 
+                      onClick={() => handlePublish('schedule')} 
+                      disabled={!scheduledAt || !canPublish}
+                      title={!canPublish ? 'Assign Hero, Industry, and at least one Topic before scheduling/publishing' : undefined}
+                      style={{ padding: '6px 10px', borderRadius: 4, background: (scheduledAt && canPublish) ? '#f59e0b' : '#ccc', color: 'white', border: 'none', fontSize: 10, fontWeight: 600, cursor: (scheduledAt && canPublish) ? 'pointer' : 'not-allowed' }}
+                    >
+                      {(data?.draft?.ScheduledAt || data?.draft?.scheduledAt) ? 'Re-schedule' : 'Schedule'}
+                    </button>
+                  </div>
                 </div>
-                {publishMode === 'schedule' && (
-                  <input type="datetime-local" value={scheduledAt} onChange={e => setScheduledAt(e.target.value)} style={{ padding: 8, borderRadius: 6, border: '1px solid #eee', width: '100%' }} />
-                )}
-              </div>
 
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button onClick={saveDraft} style={{ flex: 1, background: '#c92b2b', color: 'white', border: 'none', padding: '10px 12px', borderRadius: 8 }}>Save Draft</button>
-                <button onClick={handlePublish} style={{ flex: 1, background: '#1e73d1', color: 'white', border: 'none', padding: '10px 12px', borderRadius: 8 }}>{publishMode === 'now' ? 'Publish Now' : (publishMode === 'schedule' ? 'Schedule' : 'Save as Draft')}</button>
-                <button onClick={() => navigate('/consultant/publish-queue')} style={{ flex: 1, background: '#f5f5f5', border: '1px solid #eee', padding: '10px 12px', borderRadius: 8 }}>Cancel</button>
+                {/* Publish Now */}
+                <button 
+                  onClick={() => handlePublish('now')} 
+                  disabled={!canPublish}
+                  title={!canPublish ? 'Assign Hero, Industry, and at least one Topic before publishing' : undefined}
+                  style={{ width: '100%', background: canPublish ? 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)' : '#dfe8df', color: canPublish ? 'white' : '#888', border: 'none', padding: '10px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: canPublish ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, boxShadow: canPublish ? '0 2px 4px rgba(22, 163, 74, 0.3)' : 'none' }}
+                >
+                  <span>🚀</span> Publish Now
+                </button>
+
+                {/* Cancel */}
               </div>
             </div>
           </div>
