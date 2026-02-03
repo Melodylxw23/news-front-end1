@@ -27,10 +27,12 @@ import IndustryManagement from './assets/pages/IndustryManagement'
 import InterestManagement from './assets/pages/InterestManagement'
 import CategoryManagement from './assets/pages/CategoryManagement'
 import UserManagement from './assets/pages/UserManagement'
+import MemberAnalytics from './assets/pages/MemberAnalytics'
 import SetInitialPassword from './assets/pages/SetInitialPassword'
 import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
 import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
+import PreferencesSetup from './assets/pages/PreferencesSetup'
 import MemberProfile from './assets/pages/MemberProfile'
 import BroadcastManagement from './assets/pages/BroadcastManagement';
 import DraftsList from './assets/pages/DraftsList';
@@ -43,6 +45,8 @@ import PublishArticle from './assets/pages/PublishArticle';
 import PublicArticles from './assets/pages/PublicArticles';
 import TopicsOfInterest from './assets/pages/TopicsOfInterest';
 import ForgotPassword from './assets/pages/ForgotPassword';
+import MemberArticles from './assets/pages/MemberArticles';
+import MemberArticleDetail from './assets/pages/MemberArticleDetail';
 
 
 // Sidebar component (trimmed to use only existing pages)
@@ -157,6 +161,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
 
   const navItemsByRole = {
     member: [
+      { path: '/member/articles', label: 'Articles', icon: icons.news },
       { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
       { path: '/member/profile', label: 'My Profile', icon: icons.profile }
     ],
@@ -385,7 +390,15 @@ function AppContent() {
   const handleLoginSuccess = (role) => { setIsLoggedIn(true); setUserRole(role); };
   // navigate to landing after login
   const navigate = useNavigate();
-  const handleLoginSuccessAndNavigate = (role) => { setIsLoggedIn(true); setUserRole(role); navigate('/landing'); };
+  const handleLoginSuccessAndNavigate = (role) => {
+    setIsLoggedIn(true);
+    setUserRole(role);
+    if (String(role).toLowerCase() === 'member') {
+      navigate('/member/articles');
+    } else {
+      navigate('/landing');
+    }
+  };
   const handleLogout = () => { localStorage.removeItem('token'); setIsLoggedIn(false); navigate('/MemberLogin'); };
 
   const isMobile = useBreakpointValue({ base: true, md: false });
@@ -420,12 +433,16 @@ function AppContent() {
           <Route path={'/StaffLogin'} element={<StaffLogin onLoginSuccess={handleLoginSuccessAndNavigate} />} />
           <Route path={'/StaffRegister'} element={<StaffRegister />} />
           <Route path={'/set-initial-password'} element={<SetInitialPassword />} />
+          <Route path={'/setup-preferences'} element={<PreferencesSetup />} />
           <Route path={'/select-topics'} element={<SelectTopicsOfInterest />} />
           <Route path={'/notification-preferences'} element={<NotificationPreferences />} />
           <Route path={'/notification-frequency'} element={<NotificationFrequency />} />
           <Route path={'/member/profile'} element={<MemberProfile />} />
           <Route path={'/landing'} element={<LoginLanding />} />
+          <Route path={'/member/articles'} element={<MemberArticles />} />
+          <Route path={'/member/articles/:id'} element={<MemberArticleDetail />} />
           <Route path={'/admin/users'} element={<UserManagement />} />
+          <Route path={'/admin/member-analytics'} element={<MemberAnalytics />} />
           <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
           <Route path={'/consultant/fetch'} element={<NewsFetchDashboard />} />

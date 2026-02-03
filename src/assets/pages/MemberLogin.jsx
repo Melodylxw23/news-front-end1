@@ -37,12 +37,6 @@ function MemberLogin({ onLoginSuccess }) {
       } else {
         const token = data?.token
         if (token) localStorage.setItem('token', token)
-        
-        // Check if user needs to select topics of interest
-        if (data?.needsTopicSelection === true) {
-          navigate('/select-topics')
-          return
-        }
 
         // Prefer role from token claims if available
         const roleFromToken = getRoleFromToken(token)
@@ -52,9 +46,14 @@ function MemberLogin({ onLoginSuccess }) {
           if (nameFromToken) localStorage.setItem('name', nameFromToken)
           if (onLoginSuccess) onLoginSuccess(roleFromToken)
           
-          // Navigate to member profile for members
+          // Navigate to articles page for members
           if (roleFromToken.toLowerCase() === 'member') {
-            navigate('/member/profile')
+            if (localStorage.getItem('needsPreferencesSetup') === 'true') {
+              localStorage.removeItem('needsPreferencesSetup')
+              navigate('/setup-preferences')
+              return
+            }
+            navigate('/member/articles')
             return
           }
         } else {
@@ -74,21 +73,26 @@ function MemberLogin({ onLoginSuccess }) {
               if (me?.Name) localStorage.setItem('name', me.Name)
               if (onLoginSuccess) onLoginSuccess(determined)
               
-              // Navigate to member profile for members
+              // Navigate to articles page for members
               if (determined === 'member') {
-                navigate('/member/profile')
+                if (localStorage.getItem('needsPreferencesSetup') === 'true') {
+                  localStorage.removeItem('needsPreferencesSetup')
+                  navigate('/setup-preferences')
+                  return
+                }
+                navigate('/member/articles')
                 return
               }
             } else {
               localStorage.setItem('role', 'member')
               if (onLoginSuccess) onLoginSuccess('member')
-              navigate('/member/profile')
+              navigate('/member/articles')
               return
             }
           } catch (err) {
             localStorage.setItem('role', 'member')
             if (onLoginSuccess) onLoginSuccess('member')
-            navigate('/member/profile')
+            navigate('/member/articles')
             return
           }
         }
@@ -215,7 +219,7 @@ function MemberLogin({ onLoginSuccess }) {
 
               <div className="auth-footer">
                 <Link to="/forgot-password" className="footer-link">Forgot Password?</Link>
-                <Link to="/topics-of-interest" className="footer-link">Register a Member Account</Link>
+                <Link to="/register" className="footer-link">Register a Member Account</Link>
               </div>
 
               <div className="staff-link-section">

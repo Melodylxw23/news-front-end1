@@ -4,14 +4,13 @@ import { useNavigate } from 'react-router-dom'
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || ''
 
 const apiFetch = async (path, opts = {}) => {
-  const token = localStorage.getItem('token')
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {})
-  if (token) headers['Authorization'] = `Bearer ${token}`
   const fullPath = path.startsWith('http') ? path : `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`
 
   console.log('[apiFetch] request', opts.method || 'GET', fullPath, opts.body ? JSON.parse(opts.body) : undefined)
 
-  const res = await fetch(fullPath, Object.assign({ headers }, opts))
+  const fetchOpts = Object.assign({}, opts, { headers })
+  const res = await fetch(fullPath, fetchOpts)
   const text = await res.text().catch(() => '')
   if (!res.ok) {
     const errorMsg = `HTTP ${res.status} ${res.statusText}${text ? ': ' + text : ''}`
@@ -30,70 +29,10 @@ export default function SelectTopicsOfInterest({ onComplete }) {
   const [notifyEnabled, setNotifyEnabled] = useState(true)
   const [loading, setLoading] = useState(false)
   const [loadingTopics, setLoadingTopics] = useState(true)
-  const [loadingProfile, setLoadingProfile] = useState(true)
 
   useEffect(() => {
     loadTopics()
-    loadCurrentPreferences()
   }, [])
-
-  const loadCurrentPreferences = async () => {
-    setLoadingProfile(true)
-    try {
-      const token = localStorage.getItem('token')
-      if (!token) {
-        setLoadingProfile(false)
-        return
-      }
-
-      const res = await fetch('/api/UserControllers/me', { 
-        headers: { Authorization: `Bearer ${token}` } 
-      })
-      
-      if (!res.ok) {
-        setLoadingProfile(false)
-        return
-      }
-
-      const data = await res.json()
-      console.log('[loadCurrentPreferences] Full API response:', data)
-      
-      const memberData = data?.Member || data?.member
-      console.log('[loadCurrentPreferences] Member data:', memberData)
-
-      if (memberData) {
-        // Pre-populate language - map from backend enum values to dropdown values
-        // Backend enum: EN, ZH, Both
-        const backendLang = memberData.preferredLanguage || memberData.PreferredLanguage
-        console.log('[loadCurrentPreferences] Backend language value:', backendLang, 'Type:', typeof backendLang)
-        
-        if (backendLang) {
-          // Map backend enum values to dropdown values
-          if (backendLang === 'EN' || backendLang === 'English' || backendLang === 0) {
-            console.log('[loadCurrentPreferences] Setting language to English')
-            setLanguage('English')
-          } else if (backendLang === 'ZH' || backendLang === 'Chinese' || backendLang === '中文' || backendLang === 1) {
-            console.log('[loadCurrentPreferences] Setting language to Chinese')
-            setLanguage('Chinese')
-          } else {
-            console.log('[loadCurrentPreferences] Using backend value as-is:', backendLang)
-            setLanguage(backendLang) // Use as-is if already matches
-          }
-        }
-
-        // Pre-populate selected topics
-        const interests = memberData.interests || memberData.Interests || []
-        if (interests.length > 0) {
-          const selectedIds = interests.map(i => i.interestTagId || i.InterestTagId)
-          setSelectedTopics(selectedIds)
-        }
-      }
-    } catch (e) {
-      console.error('[loadCurrentPreferences] error:', e)
-    } finally {
-      setLoadingProfile(false)
-    }
-  }
 
   const loadTopics = async () => {
     setLoadingTopics(true)
@@ -102,9 +41,11 @@ export default function SelectTopicsOfInterest({ onComplete }) {
       console.log('[loadTopics] raw response:', res)
       const list = res?.data || res || []
       const mapped = Array.isArray(list) ? list.map(t => ({
-        id: t.interestTagId ?? t.InterestTagId ?? t.id,
-        name: t.name ?? t.Name
+        id: t.interestTagId,
+        nameEN: t.nameEN,
+        nameZH: t.nameZH
       })) : []
+      console.log('[loadTopics] mapped topics:', mapped)
       setTopics(mapped)
     } catch (e) {
       console.error('[loadTopics] error:', e)
@@ -137,30 +78,58 @@ export default function SelectTopicsOfInterest({ onComplete }) {
       console.log('[handleSubmit] Frontend language:', language)
       console.log('[handleSubmit] Mapped backend language:', backendLanguage)
       
-      // Only send database topic IDs (no custom topics)
-      const payload = {
+      // Store selections in localStorage to be used during registration
+      const topicSelections = {
         InterestTagIds: selectedTopics,
         CustomTopics: [],
         PreferredLanguage: backendLanguage,
         NotifyNewArticles: notifyEnabled
       }
 
-      console.log('[handleSubmit] Full payload:', payload)
-
-      const res = await apiFetch('/api/UserControllers/select-topics', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      })
+      console.log('[handleSubmit] Storing topic selections:', topicSelections)
       
-      console.log('[handleSubmit] API response:', res)
+      // Save to localStorage for registration process
+      localStorage.setItem('pendingTopicSelections', JSON.stringify(topicSelections))
 
-      alert(res?.message || 'Topics saved successfully!')
-      
-      // Navigate to notification preferences page
-      navigate('/notification-preferences')
+      // Also send to backend if user is logged in
+      const token = localStorage.getItem('token')
+      if (token) {
+        const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }
+        const payload = {
+          InterestTagIds: selectedTopics,  // Capital I to match backend DTO
+          PreferredLanguage: language === 'Chinese' ? 'ZH' : 'EN',
+          NotificationChannels: ''  // Will be updated in next step
+        }
+        console.log('[handleSubmit] Sending to /api/UserControllers/select-topics:', payload)
+        
+        const res = await fetch('/api/UserControllers/select-topics', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        })
+        
+        const responseText = await res.text()
+        console.log('[handleSubmit] Response status:', res.status)
+        console.log('[handleSubmit] Response body:', responseText)
+        
+        if (res.ok) {
+          console.log('[handleSubmit] Interest tags saved to backend successfully')
+        } else {
+          console.warn('[handleSubmit] Failed to save interests to backend:', res.status, responseText)
+        }
+      }
+
+      // Call the onComplete callback if provided (from PreferencesSetup)
+      if (onComplete) {
+        onComplete()
+      } else {
+        // Fallback for standalone usage
+        alert('Topic preferences saved! Complete your registration to finish.')
+        navigate('/notification-preferences')
+      }
     } catch (e) {
       console.error('[handleSubmit] error:', e)
-      alert('Failed to save topics: ' + e.message)
+      alert('Failed to save topic selections: ' + e.message)
     } finally {
       setLoading(false)
     }
@@ -245,7 +214,7 @@ export default function SelectTopicsOfInterest({ onComplete }) {
           </p>
 
           {/* Topics Grid */}
-          {(loadingTopics || loadingProfile) ? (
+          {loadingTopics ? (
             <div style={{ padding: 32, textAlign: 'center', color: '#999' }}>Loading topics...</div>
           ) : (
             <div style={{ 
@@ -271,7 +240,7 @@ export default function SelectTopicsOfInterest({ onComplete }) {
                     position: 'relative'
                   }}
                 >
-                  {topic.name}
+                  {language === 'Chinese' ? topic.nameZH : topic.nameEN}
                 </button>
               ))}
             </div>

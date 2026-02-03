@@ -4,12 +4,11 @@ import { useNavigate } from 'react-router-dom'
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || ''
 
 const apiFetch = async (path, opts = {}) => {
-  const token = localStorage.getItem('token')
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {})
-  if (token) headers['Authorization'] = `Bearer ${token}`
   const fullPath = path.startsWith('http') ? path : `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`
 
-  const res = await fetch(fullPath, Object.assign({ headers }, opts))
+  const fetchOpts = Object.assign({}, opts, { headers })
+  const res = await fetch(fullPath, fetchOpts)
   const text = await res.text().catch(() => '')
   if (!res.ok) {
     const errorMsg = `HTTP ${res.status} ${res.statusText}${text ? ': ' + text : ''}`
@@ -18,7 +17,7 @@ const apiFetch = async (path, opts = {}) => {
   try { return text ? JSON.parse(text) : null } catch (e) { return text }
 }
 
-export default function NotificationPreferences() {
+export default function NotificationPreferences({ onComplete }) {
   const navigate = useNavigate()
   const [language, setLanguage] = useState('English')
   const [channels, setChannels] = useState({
@@ -28,46 +27,6 @@ export default function NotificationPreferences() {
     inApp: false
   })
   const [loading, setLoading] = useState(false)
-
-  // Load existing preferences on mount
-  useEffect(() => {
-    const loadPreferences = async () => {
-      try {
-        const response = await apiFetch('/api/UserControllers/me')
-        const userData = response?.data || response
-        
-        console.log('[NotificationPreferences] Full response:', response)
-        console.log('[NotificationPreferences] Loaded user data:', userData)
-        
-        // The notification data is nested in the member object
-        const memberData = userData?.member || userData?.Member
-        console.log('[NotificationPreferences] Member data:', memberData)
-        
-        // Pre-populate channels if they exist
-        const channelsString = memberData?.notificationChannels || memberData?.NotificationChannels
-        console.log('[NotificationPreferences] Channels string:', channelsString)
-        
-        if (channelsString) {
-          const existingChannels = channelsString.split(',').map(ch => ch.trim().toLowerCase())
-          console.log('[NotificationPreferences] Parsed channels array:', existingChannels)
-          
-          const channelsState = {
-            whatsapp: existingChannels.includes('whatsapp'),
-            email: existingChannels.includes('email'),
-            sms: existingChannels.includes('sms'),
-            inApp: existingChannels.includes('inapp') || existingChannels.includes('in-app')
-          }
-          console.log('[NotificationPreferences] Pre-populating channels:', channelsState)
-          setChannels(channelsState)
-        } else {
-          console.log('[NotificationPreferences] No existing channels found')
-        }
-      } catch (err) {
-        console.error('[NotificationPreferences] Error loading preferences:', err)
-      }
-    }
-    loadPreferences()
-  }, [])
 
   const handleChannelToggle = (channel) => {
     setChannels(prev => ({ ...prev, [channel]: !prev[channel] }))
@@ -83,19 +42,23 @@ export default function NotificationPreferences() {
       
       console.log('[NotificationPreferences] Selected channels:', selectedChannels)
       
-      const payload = {
-        NotificationChannels: selectedChannels // "whatsapp,email,sms,inApp"
+      const preferences = {
+        NotificationChannels: selectedChannels
       }
 
-      console.log('[NotificationPreferences] Saving preferences:', payload)
+      console.log('[NotificationPreferences] Storing preferences:', preferences)
       
-      await apiFetch('/api/UserControllers/update-notification-preferences', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      })
+      // Store in localStorage for registration process
+      localStorage.setItem('pendingNotificationPreferences', JSON.stringify(preferences))
 
-      alert('Preferences saved!')
-      navigate('/notification-frequency')
+      // Call the onComplete callback if provided (from PreferencesSetup)
+      if (onComplete) {
+        onComplete()
+      } else {
+        // Fallback for standalone usage
+        alert('Notification preferences saved!')
+        navigate('/notification-frequency')
+      }
     } catch (err) {
       console.error('[NotificationPreferences] Error:', err)
       alert('Failed to save preferences: ' + err.message)

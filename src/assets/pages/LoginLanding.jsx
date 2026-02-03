@@ -11,7 +11,18 @@ export default function LoginLanding() {
   const [name, setName] = React.useState(() => localStorage.getItem('name') || '')
   const [loading, setLoading] = React.useState(false)
   const [memberProfile, setMemberProfile] = React.useState(null)
+  const [pendingInterests, setPendingInterests] = React.useState([])
   const navigate = useNavigate()
+
+  const parseStoredJson = (key) => {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw ? JSON.parse(raw) : null
+    } catch (e) {
+      console.error(`[LoginLanding] Failed to parse ${key}:`, e)
+      return null
+    }
+  }
 
   React.useEffect(() => {
     const token = localStorage.getItem('token')
@@ -59,6 +70,39 @@ export default function LoginLanding() {
     }).catch(() => setLoading(false))
   }, [])
 
+  React.useEffect(() => {
+    const interests = memberProfile?.Interests || memberProfile?.interests || []
+    if (interests.length > 0) return
+
+    const pending = parseStoredJson('pendingTopicSelections')
+    const pendingIds = pending?.InterestTagIds || []
+    if (!pendingIds.length) return
+
+    let cancelled = false
+    const loadPending = async () => {
+      try {
+        const res = await fetch('/api/InterestTags')
+        const data = await res.json().catch(() => null)
+        const list = data?.data || []
+        const nameById = new Map(
+          list.map(t => [
+            t.interestTagId ?? t.InterestTagId,
+            t.nameEN ?? t.NameEN ?? t.name ?? t.Name
+          ])
+        )
+        const mapped = pendingIds.map(id => ({
+          interestTagId: id,
+          name: nameById.get(id) || `Topic ${id}`
+        }))
+        if (!cancelled) setPendingInterests(mapped)
+      } catch (e) {
+        console.error('[LoginLanding] Error loading pending interests:', e)
+      }
+    }
+    loadPending()
+    return () => { cancelled = true }
+  }, [memberProfile])
+
   const handleLogout = () => {
     localStorage.removeItem('token')
     localStorage.removeItem('role')
@@ -67,6 +111,17 @@ export default function LoginLanding() {
     setName('')
     navigate('/MemberLogin')
   }
+
+  const pendingTopicSelections = parseStoredJson('pendingTopicSelections')
+  const pendingNotificationPreferences = parseStoredJson('pendingNotificationPreferences')
+  const pendingNotificationFrequency = parseStoredJson('pendingNotificationFrequency')
+
+  const displayLanguage = memberProfile?.PreferredLanguage || memberProfile?.preferredLanguage || pendingTopicSelections?.PreferredLanguage
+  const displayInterests = (memberProfile?.Interests?.length || memberProfile?.interests?.length)
+    ? (memberProfile?.Interests || memberProfile?.interests)
+    : pendingInterests
+  const displayChannels = memberProfile?.NotificationChannels || memberProfile?.notificationChannels || pendingNotificationPreferences?.NotificationChannels || ''
+  const displayFrequency = memberProfile?.NotificationFrequency || memberProfile?.notificationFrequency || pendingNotificationFrequency?.NotificationFrequency || ''
 
   return (
     <Box minH="100vh" bgGradient="linear(to-b,#f7fbff,white)" p={{ base: 6, md: 12 }}>
@@ -162,22 +217,21 @@ export default function LoginLanding() {
                             </Button>
                           </HStack>
                         
-                          {(memberProfile.PreferredLanguage || memberProfile.preferredLanguage) && (
+                          {displayLanguage && (
                             <Box mb={2}>
                               <HStack spacing={2}>
                                 <Box as="span" fontSize="16px">🌐</Box>
                                 <Text fontSize="sm" color="gray.700">
-                                  {memberProfile.PreferredLanguage || memberProfile.preferredLanguage}
+                                  {displayLanguage}
                                 </Text>
                               </HStack>
                             </Box>
                           )}
                           
                           <Box>
-                            {((memberProfile.Interests && memberProfile.Interests.length > 0) || 
-                              (memberProfile.interests && memberProfile.interests.length > 0)) ? (
+                            {displayInterests && displayInterests.length > 0 ? (
                               <Box display="flex" flexWrap="wrap" gap={2}>
-                                {(memberProfile.Interests || memberProfile.interests || []).map((interest, idx) => (
+                                {displayInterests.map((interest, idx) => (
                                   <Box
                                     key={idx}
                                     px={3}
@@ -190,7 +244,7 @@ export default function LoginLanding() {
                                     border="1px solid"
                                     borderColor="red.200"
                                   >
-                                    {interest.Name || interest.name}
+                                    {interest.Name || interest.name || interest.nameEN || interest.NameEN}
                                   </Box>
                                 ))}
                               </Box>
@@ -226,9 +280,9 @@ export default function LoginLanding() {
                             </Button>
                           </HStack>
                           
-                          {memberProfile.NotificationChannels || memberProfile.notificationChannels ? (
+                          {displayChannels ? (
                             <Box display="flex" flexWrap="wrap" gap={2}>
-                              {(memberProfile.NotificationChannels || memberProfile.notificationChannels || '').split(',').map((channel, idx) => (
+                              {displayChannels.split(',').map((channel, idx) => (
                                 <Box
                                   key={idx}
                                   px={3}
@@ -279,7 +333,7 @@ export default function LoginLanding() {
                             </Button>
                           </HStack>
                           
-                          {memberProfile.NotificationFrequency || memberProfile.notificationFrequency ? (
+                          {displayFrequency ? (
                             <Box display="flex" flexWrap="wrap" gap={2}>
                               <Box
                                 px={3}
@@ -292,9 +346,9 @@ export default function LoginLanding() {
                                 border="1px solid"
                                 borderColor="purple.200"
                               >
-                                {((memberProfile.NotificationFrequency || memberProfile.notificationFrequency) === 'immediate' && '⚡ Immediate') ||
-                                 ((memberProfile.NotificationFrequency || memberProfile.notificationFrequency) === 'daily' && '📅 Daily Digest') ||
-                                 ((memberProfile.NotificationFrequency || memberProfile.notificationFrequency) === 'weekly' && '📊 Weekly Digest')}
+                                {(displayFrequency === 'immediate' && '⚡ Immediate') ||
+                                 (displayFrequency === 'daily' && '📅 Daily Digest') ||
+                                 (displayFrequency === 'weekly' && '📊 Weekly Digest')}
                               </Box>
                             </Box>
                           ) : (

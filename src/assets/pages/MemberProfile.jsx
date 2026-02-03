@@ -21,6 +21,8 @@ export default function MemberProfile() {
   const [aiSuggestions, setAiSuggestions] = useState([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
   const [showSuggestions, setShowSuggestions] = useState(true)
+  const [pendingInterests, setPendingInterests] = useState([])
+  const [selectedIndustry, setSelectedIndustry] = useState(null)
   
   // Interest Decay state
   const [decayRecommendations, setDecayRecommendations] = useState([])
@@ -30,10 +32,75 @@ export default function MemberProfile() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    // Load industry from localStorage (saved during registration)
+    const loadIndustry = async () => {
+      try {
+        const industryId = localStorage.getItem('selectedIndustryTagId')
+        if (industryId) {
+          // Fetch industry tags to get the name
+          const res = await apiFetch('/api/IndustryTags')
+          const list = res?.data || res || []
+          const found = list.find(ind => 
+            (ind.industryTagId ?? ind.IndustryTagId) == industryId
+          )
+          if (found) {
+            setSelectedIndustry(found.nameEN ?? found.NameEN)
+          }
+        }
+      } catch (err) {
+        console.error('[MemberProfile] Error loading industry:', err)
+      }
+    }
+    
+    loadIndustry()
     loadProfile()
     loadAISuggestions()
     loadInterestDecayRecommendations()
   }, [])
+
+  const parseStoredJson = (key) => {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw ? JSON.parse(raw) : null
+    } catch (e) {
+      console.error(`[MemberProfile] Failed to parse ${key}:`, e)
+      return null
+    }
+  }
+
+  useEffect(() => {
+    const member = profile?.member || profile?.Member
+    const currentInterests = member?.interests || member?.Interests || []
+    if (currentInterests.length > 0) return
+
+    const pending = parseStoredJson('pendingTopicSelections')
+    const pendingIds = pending?.InterestTagIds || []
+    if (!pendingIds.length) return
+
+    let cancelled = false
+    const loadPendingInterests = async () => {
+      try {
+        const res = await apiFetch('/api/InterestTags')
+        const list = res?.data || res || []
+        const nameById = new Map(
+          list.map(t => [
+            t.interestTagId ?? t.InterestTagId,
+            t.nameEN ?? t.NameEN ?? t.name ?? t.Name
+          ])
+        )
+        const mapped = pendingIds.map(id => ({
+          interestTagId: id,
+          name: nameById.get(id) || `Topic ${id}`
+        }))
+        if (!cancelled) setPendingInterests(mapped)
+      } catch (err) {
+        console.error('[MemberProfile] Error loading pending interests:', err)
+      }
+    }
+
+    loadPendingInterests()
+    return () => { cancelled = true }
+  }, [profile])
 
   const loadProfile = async () => {
     setLoading(true)
@@ -338,9 +405,15 @@ export default function MemberProfile() {
 
   const member = profile.member || profile.Member
   const interests = member?.interests || member?.Interests || []
-  const channels = member?.notificationChannels || member?.NotificationChannels || ''
-  const frequency = member?.notificationFrequency || member?.NotificationFrequency || ''
-  const language = member?.preferredLanguage || member?.PreferredLanguage || 'EN'
+
+  const pendingTopicSelections = parseStoredJson('pendingTopicSelections')
+  const pendingNotificationPreferences = parseStoredJson('pendingNotificationPreferences')
+  const pendingNotificationFrequency = parseStoredJson('pendingNotificationFrequency')
+
+  const displayInterests = interests.length > 0 ? interests : pendingInterests
+  const channels = (member?.notificationChannels || member?.NotificationChannels || pendingNotificationPreferences?.NotificationChannels || '')
+  const frequency = (member?.notificationFrequency || member?.NotificationFrequency || pendingNotificationFrequency?.NotificationFrequency || '')
+  const language = (member?.preferredLanguage || member?.PreferredLanguage || pendingTopicSelections?.PreferredLanguage || 'EN')
 
   // Parse notification channels
   const channelList = channels ? channels.split(',').map(c => c.trim()) : []
@@ -387,6 +460,18 @@ export default function MemberProfile() {
           <div style={{ display: 'flex' }}>
             <div style={{ width: 180, fontWeight: 600, color: '#4A5568' }}>Country:</div>
             <div style={{ color: '#2D3748' }}>{member?.country || '-'}</div>
+          </div>
+          <div style={{ display: 'flex' }}>
+            <div style={{ width: 180, fontWeight: 600, color: '#4A5568' }}>Industry:</div>
+            <div style={{ color: '#2D3748' }}>
+              {(() => {
+                const industryTags = member?.industryTags || member?.IndustryTags || []
+                if (Array.isArray(industryTags) && industryTags.length > 0) {
+                  return industryTags.map(tag => tag.nameEN || tag.NameEN || tag.name || tag.Name).filter(Boolean).join(', ')
+                }
+                return selectedIndustry || member?.industry || member?.Industry || '-'
+              })()}
+            </div>
           </div>
           <div style={{ display: 'flex' }}>
             <div style={{ width: 180, fontWeight: 600, color: '#4A5568' }}>Membership Type:</div>
@@ -438,8 +523,8 @@ export default function MemberProfile() {
             Topics of Interest
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {interests.length > 0 ? (
-              interests.map((topic, idx) => (
+            {displayInterests.length > 0 ? (
+              displayInterests.map((topic, idx) => (
                 <span
                   key={idx}
                   style={{
@@ -452,7 +537,7 @@ export default function MemberProfile() {
                     border: '1px solid #FC8181'
                   }}
                 >
-                  {topic.name || topic.Name}
+                  {topic.name || topic.Name || topic.nameEN || topic.NameEN}
                 </span>
               ))
             ) : (
