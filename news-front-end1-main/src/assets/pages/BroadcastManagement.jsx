@@ -432,13 +432,13 @@ const BroadcastManagement = () => {
             const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
             const channelEnumValue = toChannelEnumValue(selectedChannels);
             const submitData = {
-                Title: formData.title,
-                Subject: formData.subject,
-                Body: formData.body,
-                Channel: channelEnumValue,
-                TargetAudience: toAudienceEnumValue(selectedAudience),
-                ScheduledSendAt: formData.scheduledSendAt || null,
-                SelectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                title: formData.title,
+                subject: formData.subject,
+                body: formData.body,
+                channel: channelEnumValue,
+                targetAudience: toAudienceEnumValue(selectedAudience),
+                scheduledSendAt: formData.scheduledSendAt || null,
+                selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
             };
             console.log('[handleSubmit] selectedChannels array:', selectedChannels);
             console.log('[handleSubmit] channelEnumValue:', channelEnumValue, '(should be 1 for Email)');
@@ -502,13 +502,13 @@ const BroadcastManagement = () => {
                 const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
                 const channelEnumValue = toChannelEnumValue(selectedChannels);
                 const submitData = {
-                    Title: formData.title,
-                    Subject: formData.subject,
-                    Body: formData.body,
-                    Channel: channelEnumValue,
-                    TargetAudience: toAudienceEnumValue(selectedAudience),
-                    ScheduledSendAt: formData.scheduledSendAt || null,
-                    SelectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                    title: formData.title,
+                    subject: formData.subject,
+                    body: formData.body,
+                    channel: channelEnumValue,
+                    targetAudience: toAudienceEnumValue(selectedAudience),
+                    scheduledSendAt: formData.scheduledSendAt || null,
+                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
                 };
                 
                 const response = await apiFetch('/api/Broadcast', {
@@ -585,13 +585,13 @@ const BroadcastManagement = () => {
                 const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
                 const channelEnumValue = toChannelEnumValue(selectedChannels);
                 const submitData = {
-                    Title: formData.title,
-                    Subject: formData.subject,
-                    Body: formData.body,
-                    Channel: channelEnumValue,
-                    TargetAudience: toAudienceEnumValue(selectedAudience),
-                    ScheduledSendAt: formData.scheduledSendAt || null,
-                    SelectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                    title: formData.title,
+                    subject: formData.subject,
+                    body: formData.body,
+                    channel: channelEnumValue,
+                    targetAudience: toAudienceEnumValue(selectedAudience),
+                    scheduledSendAt: formData.scheduledSendAt || null,
+                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
                 };
                 
                 const response = await apiFetch('/api/Broadcast', {
@@ -689,12 +689,12 @@ const BroadcastManagement = () => {
             
             // Step 1: Save/Create the broadcast first (without Status='Scheduled')
             const submitData = {
-                Title: formData.title,
-                Subject: formData.subject,
-                Body: formData.body,
-                Channel: channelEnumValue,
-                TargetAudience: toAudienceEnumValue(selectedAudience),
-                SelectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                title: formData.title,
+                subject: formData.subject,
+                body: formData.body,
+                channel: channelEnumValue,
+                targetAudience: toAudienceEnumValue(selectedAudience),
+                selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
             };
 
             let broadcastId;
