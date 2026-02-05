@@ -48,7 +48,8 @@ import TopicsOfInterest from './assets/pages/TopicsOfInterest';
 import ForgotPassword from './assets/pages/ForgotPassword';
 import MemberArticles from './assets/pages/MemberArticles';
 import MemberArticleDetail from './assets/pages/MemberArticleDetail';
-
+import ConsultantAdvice from './assets/pages/ConsultantAdvice';
+import BroadcastAnalytics from './assets/pages/BroadcastAnalytics';
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -169,15 +170,17 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
       { path: '/consultant/fetch', label: 'News Fetch Dashboard', icon: icons.news },
       { path: '/consultant/articles', label: 'Articles List', icon: icons.articles },
-      { path: '/consultant/publish-queue', label: 'Publish Queue', icon: icons.publish }
+      { path: '/consultant/publish-queue', label: 'Publish Queue', icon: icons.publish },
+      {path: '/consultant-advice', label: 'Consultant Advice', icon: icons.users}
     ],
     admin: [
       { path: '/admin/users', label: 'User Management', icon: icons.users },
       { path: '/admin/categories', label: 'Category Management', icon: icons.category },
       { path: '/admin/sources', label: 'Source Management', icon: icons.sources },
       { path: '/admin/broadcast', label: 'Broadcast Management', icon: icons.broadcast, hasArrow: true },
+      {path: '/broadcast-analytics', label: 'Broadcast Analytics', icon: icons.dashboard},
       { path: '/notification-preferences', label: 'Notifications', icon: icons.notifications },
-      { path: '/landing', label: 'Settings', icon: icons.settings }
+
     ]
   };
 
@@ -459,6 +462,8 @@ function AppContent() {
           <Route path={'/public-articles'} element={<PublicArticles />} />
           <Route path={'/topics-of-interest'} element={<TopicsOfInterest />} />
           <Route path={'/forgot-password'} element={<ForgotPassword />} />
+          <Route path={'/consultant-advice'} element={<ConsultantAdvice />} />
+          <Route path={'/broadcast-analytics'} element={<BroadcastAnalytics />} />
         </Routes>
       </Box>
     </Flex>

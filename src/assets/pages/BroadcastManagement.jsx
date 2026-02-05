@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getRoleFromToken } from '../../utils/auth';
 import { useNavigate } from 'react-router-dom';
+import { previewBroadcastRecipients, sendBroadcast, getBroadcastStatistics, getAudienceCounts } from '../../api/broadcast';
 
 // Add CSS for loading animation
 const styleSheet = document.createElement("style");
@@ -13,13 +14,20 @@ document.head.appendChild(styleSheet);
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || '';
 
+const safeJsonParse = (text) => {
+    if (!text) return null;
+    try { return JSON.parse(text); } catch (e) { return null; }
+};
+
 const apiFetch = async (path, opts = {}) => {
   const token = localStorage.getItem('token');
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const fullPath = path.startsWith('http') ? path : `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 
-  console.log('[BroadcastManagement apiFetch] request', opts.method || 'GET', fullPath, opts.body ? JSON.parse(opts.body) : undefined);
+    const debug = import.meta.env.DEV && localStorage.getItem('debugApi') === '1';
+    const requestBody = typeof opts.body === 'string' ? safeJsonParse(opts.body) : null;
+    if (debug) console.log('[BroadcastManagement apiFetch] request', opts.method || 'GET', fullPath, requestBody ?? opts.body);
 
   const res = await fetch(fullPath, Object.assign({ headers }, opts));
   const text = await res.text().catch(() => '');
@@ -28,8 +36,9 @@ const apiFetch = async (path, opts = {}) => {
     console.error('[BroadcastManagement apiFetch] response error', res.status, fullPath, text);
     throw new Error(errorMsg);
   }
-  console.log('[BroadcastManagement apiFetch] response success', res.status, fullPath, text ? JSON.parse(text) : null);
-  try { return text ? JSON.parse(text) : null; } catch (e) { return text; }
+    const parsed = safeJsonParse(text);
+    if (debug) console.log('[BroadcastManagement apiFetch] response success', res.status, fullPath, parsed ?? (text ? '[non-json response]' : null));
+    return parsed ?? (text || null);
 };
 
 const BroadcastManagement = () => {
@@ -40,7 +49,9 @@ const BroadcastManagement = () => {
         body: '',
         channel: ['Email'],
         targetAudience: [],
-        id: null
+        id: null,
+        scheduledSendAt: '',
+        selectedArticleIds: []
     });
     const [drafts, setDrafts] = useState([]);
     const [aiPrompt, setAiPrompt] = useState('');
@@ -51,16 +62,39 @@ const BroadcastManagement = () => {
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [scheduledTime, setScheduledTime] = useState('');
     const [isSavingDraft, setIsSavingDraft] = useState(false);
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
+    const [previewRecipients, setPreviewRecipients] = useState(null);
+    const [isLoadingPreview, setIsLoadingPreview] = useState(false);
+    const [isSending, setIsSending] = useState(false);
+    const [showStatisticsModal, setShowStatisticsModal] = useState(false);
+    const [statistics, setStatistics] = useState(null);
+    const [statisticsBroadcastId, setStatisticsBroadcastId] = useState(null);
 
-    // Audience data with counts
-    const audienceData = [
-        { value: 0, label: 'All Members', count: 24589 },
-        { value: 1, label: 'Technology Interested', count: 8920 },
-        { value: 2, label: 'Business Interested', count: 6890 },
-        { value: 3, label: 'Sports Interested', count: 4430 },
-        { value: 4, label: 'Entertainment Interested', count: 2950 },
-        { value: 5, label: 'Politics Interested', count: 1720 }
-    ];
+    // Published articles selection
+    const [publishedArticles, setPublishedArticles] = useState([]);
+    const [publishedLoading, setPublishedLoading] = useState(false);
+    const [publishedError, setPublishedError] = useState(null);
+    const [articleSearch, setArticleSearch] = useState('');
+
+    // Tag filters for published articles
+    const [availableIndustryTags, setAvailableIndustryTags] = useState([]);
+    const [availableInterestTags, setAvailableInterestTags] = useState([]);
+    const [tagsLoading, setTagsLoading] = useState(false);
+    const [tagsError, setTagsError] = useState(null);
+    const [selectedIndustryTagId, setSelectedIndustryTagId] = useState('');
+    const [selectedInterestTagIds, setSelectedInterestTagIds] = useState([]);
+
+    // Audience data with counts (dynamic from backend)
+    const [audienceData, setAudienceData] = useState([
+        { value: 0, label: 'All Members', count: 0 },
+        { value: 1, label: 'Technology Interested', count: 0 },
+        { value: 2, label: 'Business Interested', count: 0 },
+        { value: 3, label: 'Sports Interested', count: 0 },
+        { value: 4, label: 'Entertainment Interested', count: 0 },
+        { value: 5, label: 'Politics Interested', count: 0 }
+    ]);
+    const [audienceCountsLoading, setAudienceCountsLoading] = useState(false);
+    const [emailSubscriberCount, setEmailSubscriberCount] = useState(0);
 
     const normalizeAudience = (raw) => {
         if (Array.isArray(raw)) return raw;
@@ -124,7 +158,18 @@ const BroadcastManagement = () => {
 
     const normalizeDraft = (draft) => ({
         ...draft,
-        targetAudience: normalizeAudience(draft?.targetAudience ?? draft?.TargetAudience)
+        targetAudience: normalizeAudience(draft?.targetAudience ?? draft?.TargetAudience),
+        selectedArticlesCount: draft?.selectedArticlesCount ?? draft?.SelectedArticlesCount ?? 0,
+        selectedArticleIds: (() => {
+            const direct = draft?.selectedArticleIds ?? draft?.SelectedArticleIds;
+            if (Array.isArray(direct)) return direct;
+            const raw = draft?.selectedArticles ?? draft?.SelectedArticles ?? [];
+            if (!Array.isArray(raw)) return [];
+            return raw
+                .map((x) => x?.publicationDraftId ?? x?.PublicationDraftId ?? x?.id ?? x?.Id)
+                .map((v) => (typeof v === 'string' ? parseInt(v, 10) : v))
+                .filter((v) => typeof v === 'number' && !Number.isNaN(v));
+        })()
     });
 
     // Calculate total recipients based on selected audiences
@@ -132,7 +177,8 @@ const BroadcastManagement = () => {
         if (selected.length === 0) return 0;
         // If All Members (0) is selected, return total
         if (selected.includes(0)) {
-            return 24589;
+            const allMembersAudience = audienceData.find(a => a.value === 0);
+            return allMembersAudience ? allMembersAudience.count : 0;
         }
         // Otherwise sum the counts of selected audiences
         return selected.reduce((sum, val) => {
@@ -145,7 +191,196 @@ const BroadcastManagement = () => {
 
     useEffect(() => {
         fetchDrafts();
+        fetchTags();
+        fetchPublishedArticles();
+        fetchAudienceCounts();
+        
+        // Poll audience counts every 30 seconds
+        const audienceInterval = setInterval(() => {
+            fetchAudienceCounts();
+        }, 30000);
+        
+        return () => {
+            clearInterval(audienceInterval);
+        };
     }, []);
+
+    const fetchAudienceCounts = async () => {
+        try {
+            setAudienceCountsLoading(true);
+            const counts = await getAudienceCounts();
+            
+            console.log('[fetchAudienceCounts] received counts:', counts);
+            
+            // Handle nested interestCategories structure from backend
+            const interests = counts.interestCategories || {};
+            
+            // Update audience data with real counts from backend
+            const updatedAudienceData = [
+                { 
+                    value: 0, 
+                    label: 'All Members', 
+                    count: counts.allMembers || counts.AllMembers || counts.emailSubscribers || 0 
+                },
+                { 
+                    value: 1, 
+                    label: 'Technology Interested', 
+                    count: interests.technologyInterested || interests.TechnologyInterested || 0 
+                },
+                { 
+                    value: 2, 
+                    label: 'Business Interested', 
+                    count: interests.businessInterested || interests.BusinessInterested || 0 
+                },
+                { 
+                    value: 3, 
+                    label: 'Sports Interested', 
+                    count: interests.sportsInterested || interests.SportsInterested || 0 
+                },
+                { 
+                    value: 4, 
+                    label: 'Entertainment Interested', 
+                    count: interests.entertainmentInterested || interests.EntertainmentInterested || 0 
+                },
+                { 
+                    value: 5, 
+                    label: 'Politics Interested', 
+                    count: interests.politicsInterested || interests.PoliticsInterested || 0 
+                }
+            ];
+            setAudienceData(updatedAudienceData);
+            
+            // Update email subscriber count
+            const emailCount = counts.emailSubscribers || counts.EmailSubscribers || counts.allMembers || counts.AllMembers || 0;
+            setEmailSubscriberCount(emailCount);
+            
+            console.log('[fetchAudienceCounts] ✅ Email subscribers:', emailCount);
+            console.log('[fetchAudienceCounts] ✅ Updated audience data:', updatedAudienceData);
+        } catch (error) {
+            console.error('[fetchAudienceCounts] ❌ ERROR:', error);
+            console.error('[fetchAudienceCounts] ❌ ERROR MESSAGE:', error.message);
+            // Keep default values on error
+        } finally {
+            setAudienceCountsLoading(false);
+        }
+    };
+    
+    // Poll statistics every 10 seconds when modal is open
+    useEffect(() => {
+        let statsInterval;
+        if (showStatisticsModal && statisticsBroadcastId) {
+            statsInterval = setInterval(async () => {
+                try {
+                    const stats = await getBroadcastStatistics(statisticsBroadcastId);
+                    setStatistics(stats);
+                } catch (error) {
+                    console.error('[statistics poll] error:', error);
+                }
+            }, 10000);
+        }
+        
+        return () => {
+            if (statsInterval) clearInterval(statsInterval);
+        };
+    }, [showStatisticsModal, statisticsBroadcastId]);
+    
+    // Poll preview recipients every 5 seconds when preview modal is open
+    useEffect(() => {
+        let previewInterval;
+        if (showPreviewModal && (formData.id || generatedContentId)) {
+            previewInterval = setInterval(async () => {
+                try {
+                    const preview = await previewBroadcastRecipients(formData.id || generatedContentId);
+                    console.log('[preview poll] ✅ Preview response:', preview);
+                    setPreviewRecipients(preview);
+                } catch (error) {
+                    console.error('[preview poll] error:', error);
+                }
+            }, 5000);
+        }
+        
+        return () => {
+            if (previewInterval) clearInterval(previewInterval);
+        };
+    }, [showPreviewModal, formData.id, generatedContentId]);
+
+    const fetchTags = async () => {
+        try {
+            setTagsLoading(true);
+            setTagsError(null);
+            const response = await apiFetch('/api/Broadcast/tags');
+            const data = response?.data || response || {};
+            const industry = Array.isArray(data?.IndustryTags) ? data.IndustryTags : (Array.isArray(data?.industryTags) ? data.industryTags : []);
+            const interests = Array.isArray(data?.InterestTags) ? data.InterestTags : (Array.isArray(data?.interestTags) ? data.interestTags : []);
+            setAvailableIndustryTags(industry);
+            setAvailableInterestTags(interests);
+        } catch (error) {
+            console.error('[fetchTags] error:', error);
+            setAvailableIndustryTags([]);
+            setAvailableInterestTags([]);
+            setTagsError(error?.message || 'Failed to load tags');
+        } finally {
+            setTagsLoading(false);
+        }
+    };
+
+    const buildPublishedArticlesUrl = (industryTagId, interestTagIds) => {
+        const industry = industryTagId ? String(industryTagId) : '';
+        const interests = Array.isArray(interestTagIds) ? interestTagIds.filter(Boolean) : [];
+        if (!industry && interests.length === 0) return '/api/Broadcast/published-articles';
+        const params = [];
+        if (industry) params.push(`industryTagId=${encodeURIComponent(industry)}`);
+        interests.forEach((id) => params.push(`interestTagIds=${encodeURIComponent(String(id))}`));
+        return `/api/Broadcast/published-articles/filter?${params.join('&')}`;
+    };
+
+    const fetchPublishedArticles = async (opts = null) => {
+        try {
+            setPublishedLoading(true);
+            setPublishedError(null);
+            const industry = opts?.industryTagId !== undefined ? opts.industryTagId : selectedIndustryTagId;
+            const interests = opts?.interestTagIds !== undefined ? opts.interestTagIds : selectedInterestTagIds;
+            const url = buildPublishedArticlesUrl(industry, interests);
+            const response = await apiFetch(url);
+            const data = response?.data || response || [];
+            setPublishedArticles(Array.isArray(data) ? data : []);
+        } catch (error) {
+            console.error('[fetchPublishedArticles] error:', error);
+            setPublishedArticles([]);
+            setPublishedError(error?.message || 'Failed to load published articles');
+        } finally {
+            setPublishedLoading(false);
+        }
+    };
+
+    const clearArticleFilters = async () => {
+        setSelectedIndustryTagId('');
+        setSelectedInterestTagIds([]);
+        await fetchPublishedArticles({ industryTagId: '', interestTagIds: [] });
+    };
+
+    const toggleInterestFilter = async (interestTagId) => {
+        const idNum = typeof interestTagId === 'string' ? parseInt(interestTagId, 10) : interestTagId;
+        if (!idNum && idNum !== 0) return;
+        const current = Array.isArray(selectedInterestTagIds) ? selectedInterestTagIds : [];
+        const exists = current.includes(idNum);
+        const next = exists ? current.filter((x) => x !== idNum) : [...current, idNum];
+        setSelectedInterestTagIds(next);
+        await fetchPublishedArticles({ industryTagId: selectedIndustryTagId, interestTagIds: next });
+    };
+
+    const toggleSelectedArticle = (publicationDraftId) => {
+        const idNum = typeof publicationDraftId === 'string' ? parseInt(publicationDraftId, 10) : publicationDraftId;
+        if (!idNum && idNum !== 0) return;
+        const current = Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : [];
+        const exists = current.includes(idNum);
+        const next = exists ? current.filter((x) => x !== idNum) : [...current, idNum];
+        setFormData({ ...formData, selectedArticleIds: next });
+    };
+
+    const clearSelectedArticles = () => {
+        setFormData({ ...formData, selectedArticleIds: [] });
+    };
 
     const fetchDrafts = async () => {
         try {
@@ -197,15 +432,16 @@ const BroadcastManagement = () => {
             const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
             const channelEnumValue = toChannelEnumValue(selectedChannels);
             const submitData = {
-                Title: formData.title,
-                Subject: formData.subject,
-                Body: formData.body,
-                Channel: channelEnumValue,
-                TargetAudience: toAudienceEnumValue(selectedAudience),
-                ScheduledSendAt: formData.scheduledSendAt || null
+                title: formData.title,
+                subject: formData.subject,
+                body: formData.body,
+                channel: channelEnumValue,
+                targetAudience: toAudienceEnumValue(selectedAudience),
+                scheduledSendAt: formData.scheduledSendAt || null,
+                selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
             };
             console.log('[handleSubmit] selectedChannels array:', selectedChannels);
-            console.log('[handleSubmit] channelEnumValue:', channelEnumValue, '(should be 1 for Email, 2 for WeChat, 3 for both)');
+            console.log('[handleSubmit] channelEnumValue:', channelEnumValue, '(should be 1 for Email)');
             console.log('[handleSubmit] payload:', submitData);
             
             // If this was generated by AI, update the auto-generated draft instead of creating a new one
@@ -219,7 +455,7 @@ const BroadcastManagement = () => {
                 alert('Draft updated successfully!');
                 setGeneratedContentId(null);
                 setGeneratedContent(null);
-                setFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], id: null, scheduledSendAt: '' });
+                setFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], id: null, scheduledSendAt: '', selectedArticleIds: [] });
             } else {
                 // Create a new draft
                 const response = await apiFetch('/api/Broadcast', {
@@ -231,7 +467,7 @@ const BroadcastManagement = () => {
                 alert('Draft saved successfully!');
                 // Capture the draft ID from response
                 const draftId = response?.id || response?.Id;
-                setFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], id: draftId, scheduledSendAt: '' });
+                setFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], id: draftId, scheduledSendAt: '', selectedArticleIds: [] });
             }
             
             fetchDrafts();
@@ -249,9 +485,107 @@ const BroadcastManagement = () => {
         setScheduledTime('');
     };
 
+    const handlePreviewRecipients = async () => {
+        // First, ensure we have a draft ID (save/update if needed)
+        let draftId = formData.id || generatedContentId;
+        
+        // If using AI-generated content, update it with current form data (including selectedArticleIds)
+        if (generatedContentId && !formData.id) {
+            try {
+                setIsSavingDraft(true);
+                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
+                const channelEnumValue = toChannelEnumValue(selectedChannels);
+                const updateData = {
+                    title: formData.title,
+                    subject: formData.subject,
+                    body: formData.body,
+                    channel: channelEnumValue,
+                    targetAudience: toAudienceEnumValue(selectedAudience),
+                    scheduledSendAt: formData.scheduledSendAt || null,
+                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                };
+                
+                await apiFetch(`/api/Broadcast/${generatedContentId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(updateData)
+                });
+                
+                console.log('[handlePreviewRecipients] Updated AI-generated draft with selected articles');
+            } catch (error) {
+                console.error('[handlePreviewRecipients] update AI draft error:', error);
+                alert('Failed to update draft: ' + error.message);
+                return;
+            } finally {
+                setIsSavingDraft(false);
+            }
+        }
+        
+        if (!draftId) {
+            if (!formData.title?.trim() || !formData.subject?.trim() || !formData.body?.trim()) {
+                alert('Please fill in Title, Subject, and Message Body first.');
+                return;
+            }
+            
+            // Save draft first
+            try {
+                setIsSavingDraft(true);
+                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
+                const channelEnumValue = toChannelEnumValue(selectedChannels);
+                const submitData = {
+                    title: formData.title,
+                    subject: formData.subject,
+                    body: formData.body,
+                    channel: channelEnumValue,
+                    targetAudience: toAudienceEnumValue(selectedAudience),
+                    scheduledSendAt: formData.scheduledSendAt || null,
+                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                };
+                
+                const response = await apiFetch('/api/Broadcast', {
+                    method: 'POST',
+                    body: JSON.stringify(submitData)
+                });
+                
+                draftId = response?.id || response?.Id;
+                setFormData({ ...formData, id: draftId });
+            } catch (error) {
+                console.error('[handlePreviewRecipients] save error:', error);
+                alert('Failed to save draft: ' + error.message);
+                return;
+            } finally {
+                setIsSavingDraft(false);
+            }
+        }
+        
+        // Now preview recipients
+        try {
+            setIsLoadingPreview(true);
+            setShowPreviewModal(true);
+            const preview = await previewBroadcastRecipients(draftId);
+            console.log('[handlePreviewRecipients] ✅ Full preview response:', JSON.stringify(preview, null, 2));
+            console.log('[handlePreviewRecipients] ✅ Response keys:', Object.keys(preview || {}));
+            console.log('[handlePreviewRecipients] ✅ Recipients array:', preview?.recipients || preview?.Recipients || preview?.data?.recipients || preview?.data?.Recipients);
+            setPreviewRecipients(preview);
+        } catch (error) {
+            console.error('[handlePreviewRecipients] error:', error);
+            alert('Failed to preview recipients: ' + error.message);
+            setShowPreviewModal(false);
+        } finally {
+            setIsLoadingPreview(false);
+        }
+    };
+
     const handleSendBroadcast = async () => {
         if (!formData.title?.trim() || !formData.subject?.trim() || !formData.body?.trim()) {
             alert('Cannot send: Title, Subject, and Message Body are all required.');
+            return;
+        }
+        
+        // Check if audience is selected
+        if (!formData.targetAudience || formData.targetAudience.length === 0) {
+            alert('Please select at least one Target Audience before sending.');
             return;
         }
 
@@ -261,7 +595,10 @@ const BroadcastManagement = () => {
         if (audiences.includes(0)) {
             audienceDesc = 'All Members';
         } else if (audiences.length > 0) {
-            audienceDesc = audiences.map(getAudienceLabel).join(', ');
+            audienceDesc = audiences.map((val) => {
+                const audience = audienceData.find(a => a.value === val);
+                return audience ? audience.label : `Audience ${val}`;
+            }).join(', ');
         }
 
         // Build channel description
@@ -270,8 +607,118 @@ const BroadcastManagement = () => {
 
         if (!window.confirm(`Send "${formData.subject}" to ${audienceDesc} via ${channelDesc} now?`)) return;
         
-        // Simply navigate to the dummy success page
-        navigate('/message-sent', { state: { broadcastSubject: formData.subject } });
+        // Ensure we have a draft ID (save/update if needed)
+        let draftId = formData.id || generatedContentId;
+        
+        // If using AI-generated content, update it with current form data (including selectedArticleIds)
+        if (generatedContentId && !formData.id) {
+            try {
+                setIsSavingDraft(true);
+                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
+                const channelEnumValue = toChannelEnumValue(selectedChannels);
+                const updateData = {
+                    title: formData.title,
+                    subject: formData.subject,
+                    body: formData.body,
+                    channel: channelEnumValue,
+                    targetAudience: toAudienceEnumValue(selectedAudience),
+                    scheduledSendAt: formData.scheduledSendAt || null,
+                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                };
+                
+                await apiFetch(`/api/Broadcast/${generatedContentId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(updateData)
+                });
+                
+                console.log('[handleSendBroadcast] Updated AI-generated draft with selected articles');
+            } catch (error) {
+                console.error('[handleSendBroadcast] update AI draft error:', error);
+                alert('Failed to update draft: ' + error.message);
+                return;
+            } finally {
+                setIsSavingDraft(false);
+            }
+        }
+        
+        if (!draftId) {
+            try {
+                setIsSavingDraft(true);
+                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
+                const channelEnumValue = toChannelEnumValue(selectedChannels);
+                const submitData = {
+                    title: formData.title,
+                    subject: formData.subject,
+                    body: formData.body,
+                    channel: channelEnumValue,
+                    targetAudience: toAudienceEnumValue(selectedAudience),
+                    scheduledSendAt: formData.scheduledSendAt || null,
+                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+                };
+                
+                const response = await apiFetch('/api/Broadcast', {
+                    method: 'POST',
+                    body: JSON.stringify(submitData)
+                });
+                
+                draftId = response?.id || response?.Id;
+                setFormData({ ...formData, id: draftId });
+            } catch (error) {
+                console.error('[handleSendBroadcast] save error:', error);
+                alert('Failed to save draft: ' + error.message);
+                return;
+            } finally {
+                setIsSavingDraft(false);
+            }
+        }
+        
+        // Send broadcast
+        try {
+            setIsSending(true);
+            const result = await sendBroadcast(draftId);
+            console.log('[handleSendBroadcast] sent:', result);
+            alert('Broadcast sent successfully!');
+            
+            // Clear form and refresh drafts
+            setFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], id: null, scheduledSendAt: '', selectedArticleIds: [] });
+            setGeneratedContentId(null);
+            setGeneratedContent(null);
+            fetchDrafts();
+            
+            // Navigate to success page
+            navigate('/message-sent', { state: { broadcastSubject: formData.subject } });
+        } catch (error) {
+            console.error('[handleSendBroadcast] error:', error);
+            alert('Failed to send broadcast: ' + error.message);
+        } finally {
+            setIsSending(false);
+        }
+    };
+
+    const handleViewStatistics = async (broadcastId) => {
+        try {
+            setStatisticsBroadcastId(broadcastId);
+            setShowStatisticsModal(true);
+            const stats = await getBroadcastStatistics(broadcastId);
+            setStatistics(stats);
+        } catch (error) {
+            console.error('[handleViewStatistics] error:', error);
+            alert('Failed to load statistics: ' + error.message);
+            setShowStatisticsModal(false);
+        }
+    };
+    
+    const refreshStatistics = async () => {
+        if (statisticsBroadcastId) {
+            try {
+                const stats = await getBroadcastStatistics(statisticsBroadcastId);
+                setStatistics(stats);
+            } catch (error) {
+                console.error('[refreshStatistics] error:', error);
+            }
+        }
     };
 
     const handleDelete = async (id) => {
@@ -286,14 +733,92 @@ const BroadcastManagement = () => {
         }
     };
 
-    const handleScheduleSubmit = () => {
+    const handleScheduleSubmit = async () => {
         if (!scheduledTime) {
             alert('Please select a date and time');
             return;
         }
-        setFormData({ ...formData, scheduledSendAt: scheduledTime });
-        setShowScheduleModal(false);
-        alert('Message scheduled for: ' + new Date(scheduledTime).toLocaleString());
+
+        // Validate form fields
+        if (!formData.title?.trim() || !formData.subject?.trim() || !formData.body?.trim()) {
+            alert('Please fill in Title, Subject, and Message Body before scheduling.');
+            return;
+        }
+
+        try {
+            setIsSavingDraft(true);
+            const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+            const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
+            const channelEnumValue = toChannelEnumValue(selectedChannels);
+            
+            // Step 1: Save/Create the broadcast first (without Status='Scheduled')
+            const submitData = {
+                title: formData.title,
+                subject: formData.subject,
+                body: formData.body,
+                channel: channelEnumValue,
+                targetAudience: toAudienceEnumValue(selectedAudience),
+                selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
+            };
+
+            let broadcastId;
+            if (formData.id || generatedContentId) {
+                // Update existing draft
+                broadcastId = formData.id || generatedContentId;
+                await apiFetch(`/api/Broadcast/${broadcastId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(submitData)
+                });
+            } else {
+                // Create new draft
+                const response = await apiFetch('/api/Broadcast', {
+                    method: 'POST',
+                    body: JSON.stringify(submitData)
+                });
+                broadcastId = response?.id || response?.Id;
+            }
+
+            if (!broadcastId) {
+                throw new Error('Failed to get broadcast ID');
+            }
+
+            // Step 2: Schedule the broadcast using the dedicated scheduling endpoint
+            const scheduleData = {
+                BroadcastId: broadcastId,
+                ScheduledSendAt: scheduledTime
+            };
+
+            console.log('[handleScheduleSubmit] Scheduling broadcast:', scheduleData);
+
+            await apiFetch('/api/broadcast/schedule', {
+                method: 'POST',
+                body: JSON.stringify(scheduleData)
+            });
+
+            // Update local state
+            setFormData({ ...formData, id: broadcastId, scheduledSendAt: scheduledTime });
+            setShowScheduleModal(false);
+            
+            // Show success message
+            const scheduledDate = new Date(scheduledTime);
+            const now = new Date();
+            const minutesUntilSend = Math.round((scheduledDate - now) / 60000);
+            
+            alert(
+                `✓ Broadcast scheduled successfully!\n\n` +
+                `Scheduled for: ${scheduledDate.toLocaleString()}\n` +
+                `Time until send: ${minutesUntilSend} minutes\n\n` +
+                `The broadcast will be sent automatically by the background service.`
+            );
+            
+            // Refresh drafts to show updated status
+            fetchDrafts();
+        } catch (error) {
+            console.error('[handleScheduleSubmit] error:', error);
+            alert('Failed to schedule message: ' + error.message);
+        } finally {
+            setIsSavingDraft(false);
+        }
     };
 
     const formatScheduledTime = (dateString) => {
@@ -307,21 +832,58 @@ const BroadcastManagement = () => {
         try {
             console.log('[handleAiPromptSubmit] sending prompt:', aiPrompt);
 
-            const response = await apiFetch('/api/broadcast/generate', {
+            const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+            const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
+            const channelEnumValue = toChannelEnumValue(selectedChannels);
+            const targetAudienceEnumValue = toAudienceEnumValue(selectedAudience);
+
+            const generateReq = {
+                Prompt: aiPrompt,
+                Channel: channelEnumValue,
+                TargetAudience: targetAudienceEnumValue
+            };
+
+            // Your backend controller route is api/Broadcast/generate
+            // and returns a lightweight BroadcastListItemDTO (no Body), so we fetch details after.
+            const response = await apiFetch('/api/Broadcast/generate', {
                 method: 'POST',
-                body: JSON.stringify({ Prompt: aiPrompt })
+                body: JSON.stringify(generateReq)
             });
 
             console.log('[handleAiPromptSubmit] response:', response);
 
             if (response) {
                 // Store the auto-generated ID so we can update it instead of creating a new one
-                setGeneratedContentId(response.id || response.Id);
+                const newId = response.id || response.Id;
+                setGeneratedContentId(newId);
+
+                // Prefer fetching detail DTO to get the generated Body.
+                let detail = null;
+                if (newId) {
+                    try {
+                        detail = await apiFetch(`/api/Broadcast/${newId}`);
+                    } catch (detailErr) {
+                        console.warn('[handleAiPromptSubmit] failed to fetch generated detail, falling back to response:', detailErr);
+                    }
+                }
+
+                const title = detail?.body ? (detail?.title || detail?.Title || response.title || response.Title || '') : (response.title || response.Title || '');
+                const subject = detail?.body ? (detail?.subject || detail?.Subject || response.subject || response.Subject || '') : (response.subject || response.Subject || '');
+                const body =
+                    detail?.body ||
+                    detail?.Body ||
+                    response.body ||
+                    response.Body ||
+                    response.message ||
+                    response.Message ||
+                    response.content ||
+                    '';
+
                 setGeneratedContent({
-                    title: response.title || response.Title || '',
-                    subject: response.subject || response.Subject || '',
-                    body: response.body || response.Body || response.message || response.Message || response.content || '',
-                    channel: normalizeChannels(response.channel || response.Channel || formData.channel)
+                    title,
+                    subject,
+                    body,
+                    channel: normalizeChannels(detail?.channel || detail?.Channel || response.channel || response.Channel || formData.channel)
                 });
             }
 
@@ -410,7 +972,7 @@ const BroadcastManagement = () => {
                     <div style={{ background: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', marginBottom: '24px' }}>
                         <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: '#333' }}>Select Channels</h3>
                         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                            {['Email', 'WeChat'].map((ch) => {
+                            {['Email'].map((ch) => {
                                 const isSelected = Array.isArray(formData.channel) ? formData.channel.includes(ch) : formData.channel === ch;
                                 return (
                                     <div
@@ -422,7 +984,6 @@ const BroadcastManagement = () => {
                                             const exists = current.includes(ch);
                                             let next = exists ? current.filter((c) => c !== ch) : [...current, ch];
                                             if (next.length === 0) next = ['Email'];
-                                            console.log('[Channel Toggle] channel:', ch, 'exists:', exists, 'current:', current, 'next:', next);
                                             setFormData({ ...formData, channel: next });
                                         }}
                                         onKeyDown={(e) => {
@@ -466,10 +1027,12 @@ const BroadcastManagement = () => {
                                         </div>
                                         <div>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                                <span style={{ fontSize: '20px' }}>{ch === 'Email' ? '📧' : '💬'}</span>
-                                                <span style={{ fontWeight: '600', fontSize: '15px' }}>{ch === 'Email' ? 'Email' : 'WeChat'}</span>
+                                                <span style={{ fontSize: '20px' }}>📧</span>
+                                                <span style={{ fontWeight: '600', fontSize: '15px' }}>Email</span>
                                             </div>
-                                            <div style={{ fontSize: '13px', color: '#666' }}>{ch === 'Email' ? '6,449 subscribers' : '16,189 subscribers'}</div>
+                                            <div style={{ fontSize: '13px', color: '#666' }}>
+                                                {audienceCountsLoading ? 'Loading...' : `${emailSubscriberCount.toLocaleString()} subscribers`}
+                                            </div>
                                         </div>
                                     </div>
                                 );
@@ -685,6 +1248,185 @@ const BroadcastManagement = () => {
                             />
                         </div>
                     </div>
+
+                    {/* Published Article Selection */}
+                    <div style={{ background: 'white', padding: '24px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', marginBottom: '24px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                            <div>
+                                <h3 style={{ fontSize: '16px', fontWeight: '600', margin: 0, color: '#333' }}>Attach Published Articles (Optional)</h3>
+                                <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                                    Selected: {(formData.selectedArticleIds || []).length}
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                    type="button"
+                                    onClick={fetchPublishedArticles}
+                                    style={{ padding: '8px 12px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
+                                >
+                                    Refresh
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={clearArticleFilters}
+                                    disabled={!selectedIndustryTagId && (selectedInterestTagIds || []).length === 0}
+                                    style={{ padding: '8px 12px', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: (!selectedIndustryTagId && (selectedInterestTagIds || []).length === 0) ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: (!selectedIndustryTagId && (selectedInterestTagIds || []).length === 0) ? 0.6 : 1 }}
+                                >
+                                    Clear Filters
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={clearSelectedArticles}
+                                    disabled={(formData.selectedArticleIds || []).length === 0}
+                                    style={{ padding: '8px 12px', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: (formData.selectedArticleIds || []).length === 0 ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: (formData.selectedArticleIds || []).length === 0 ? 0.6 : 1 }}
+                                >
+                                    Clear
+                                </button>
+                            </div>
+                        </div>
+
+                        <input
+                            type="text"
+                            value={articleSearch}
+                            onChange={(e) => setArticleSearch(e.target.value)}
+                            placeholder="Search published articles by title..."
+                            style={{ width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box', marginBottom: '12px' }}
+                        />
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px', marginBottom: '12px' }}>
+                            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <div style={{ minWidth: '240px', flex: 1 }}>
+                                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>Industry</div>
+                                    <select
+                                        value={selectedIndustryTagId}
+                                        disabled={tagsLoading}
+                                        onChange={async (e) => {
+                                            const next = e.target.value;
+                                            setSelectedIndustryTagId(next);
+                                            await fetchPublishedArticles({ industryTagId: next, interestTagIds: selectedInterestTagIds });
+                                        }}
+                                        style={{ width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', background: 'white' }}
+                                    >
+                                        <option value="">All industries</option>
+                                        {(availableIndustryTags || []).map((t) => {
+                                            const id = t?.Id ?? t?.id;
+                                            const name = t?.Name ?? t?.name ?? `Industry ${id}`;
+                                            return <option key={id} value={id}>{name}</option>;
+                                        })}
+                                    </select>
+                                </div>
+                                <div style={{ minWidth: '240px', flex: 1 }}>
+                                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>Interest tags</div>
+                                    <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px 12px', background: 'white', maxHeight: '120px', overflow: 'auto' }}>
+                                        {tagsLoading ? (
+                                            <div style={{ fontSize: '13px', color: '#666' }}>Loading tags...</div>
+                                        ) : (
+                                            (availableInterestTags || []).length === 0 ? (
+                                                <div style={{ fontSize: '13px', color: '#666' }}>No interest tags available.</div>
+                                            ) : (
+                                                (availableInterestTags || []).map((t) => {
+                                                    const id = t?.Id ?? t?.id;
+                                                    const name = t?.Name ?? t?.name ?? `Interest ${id}`;
+                                                    const checked = (selectedInterestTagIds || []).includes(id);
+                                                    return (
+                                                        <label key={id} style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px', color: '#111827', cursor: 'pointer', padding: '4px 0' }}>
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={checked}
+                                                                onChange={() => toggleInterestFilter(id)}
+                                                                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                                            />
+                                                            <span>{name}</span>
+                                                        </label>
+                                                    );
+                                                })
+                                            )
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            {tagsError && (
+                                <div style={{ padding: '10px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', color: '#92400e', fontSize: '13px' }}>
+                                    {tagsError}
+                                </div>
+                            )}
+                        </div>
+
+                        {publishedError && (
+                            <div style={{ padding: '10px 12px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', color: '#991b1b', fontSize: '13px', marginBottom: '12px' }}>
+                                {publishedError}
+                            </div>
+                        )}
+
+                        <div style={{ maxHeight: '320px', overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                            {publishedLoading ? (
+                                <div style={{ padding: '14px', color: '#666', fontSize: '14px' }}>Loading published articles...</div>
+                            ) : (
+                                (publishedArticles || [])
+                                    .filter((a) => {
+                                        const title = (a?.title ?? a?.Title ?? '').toString().toLowerCase();
+                                        const q = (articleSearch || '').trim().toLowerCase();
+                                        return !q || title.includes(q);
+                                    })
+                                    .slice(0, 200)
+                                    .map((a) => {
+                                        const publicationDraftId = a?.publicationDraftId ?? a?.PublicationDraftId;
+                                        const title = a?.title ?? a?.Title ?? '(Untitled)';
+                                        const publishedAt = a?.publishedAt ?? a?.PublishedAt;
+                                        const industry = a?.industryTagName ?? a?.IndustryTagName;
+                                        const interests = a?.interestTagNames ?? a?.InterestTagNames;
+                                        const isSelected = (formData.selectedArticleIds || []).includes(publicationDraftId);
+                                        return (
+                                            <div
+                                                key={publicationDraftId}
+                                                role="button"
+                                                tabIndex={0}
+                                                onClick={() => toggleSelectedArticle(publicationDraftId)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                        e.preventDefault();
+                                                        toggleSelectedArticle(publicationDraftId);
+                                                    }
+                                                }}
+                                                style={{
+                                                    display: 'flex',
+                                                    alignItems: 'flex-start',
+                                                    gap: '12px',
+                                                    padding: '12px',
+                                                    borderBottom: '1px solid #e5e7eb',
+                                                    cursor: 'pointer',
+                                                    background: isSelected ? '#fef2f2' : 'white'
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={!!isSelected}
+                                                    readOnly
+                                                    style={{ marginTop: '2px', width: '18px', height: '18px', accentColor: '#dc2626', cursor: 'pointer' }}
+                                                />
+                                                <div style={{ flex: 1 }}>
+                                                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#111827', marginBottom: '4px' }}>{title}</div>
+                                                    <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                                                        {publishedAt ? `Published: ${new Date(publishedAt).toLocaleString()}` : 'Published date unknown'}
+                                                    </div>
+                                                    {(industry || (Array.isArray(interests) && interests.length > 0)) && (
+                                                        <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                                                            {industry ? `Industry: ${industry}` : ''}
+                                                            {industry && Array.isArray(interests) && interests.length > 0 ? ' • ' : ''}
+                                                            {Array.isArray(interests) && interests.length > 0 ? `Interests: ${interests.filter(Boolean).join(', ')}` : ''}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                            )}
+
+                            {!publishedLoading && (publishedArticles || []).length === 0 && !publishedError && (
+                                <div style={{ padding: '14px', color: '#666', fontSize: '14px' }}>No published articles available.</div>
+                            )}
+                        </div>
+                    </div>
                 </div>
 
                 {/* Right Sidebar */}
@@ -791,8 +1533,15 @@ const BroadcastManagement = () => {
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: '#f9fafb', borderRadius: '6px', borderTop: '1px solid #e5e7eb' }}>
                                 <span style={{ fontWeight: '600', color: '#333' }}>Total Recipients</span>
-                                <span style={{ fontWeight: '700', color: '#dc2626' }}>{totalRecipients.toLocaleString()}</span>
+                                <span style={{ fontWeight: '700', color: totalRecipients === 0 ? '#dc2626' : '#059669' }}>
+                                    {totalRecipients.toLocaleString()}
+                                </span>
                             </div>
+                            {totalRecipients === 0 && (
+                                <div style={{ marginTop: '12px', padding: '10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '6px', fontSize: '13px', color: '#991b1b' }}>
+                                    ⚠️ Please select at least one audience to send broadcast
+                                </div>
+                            )}
                         </div>
                     </div>
 
@@ -827,45 +1576,67 @@ const BroadcastManagement = () => {
                         )}
                         <button
                             onClick={handleSendBroadcast}
+                            disabled={isSending}
                             style={{
                                 width: '100%',
                                 padding: '12px',
-                                background: '#dc2626',
+                                background: isSending ? '#dc262680' : '#dc2626',
                                 color: 'white',
                                 border: 'none',
                                 borderRadius: '6px',
-                                cursor: 'pointer',
+                                cursor: isSending ? 'not-allowed' : 'pointer',
                                 fontSize: '14px',
                                 fontWeight: '600',
                                 marginBottom: '10px',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                gap: '8px'
+                                gap: '8px',
+                                opacity: isSending ? 0.6 : 1
                             }}
                         >
-                            <span>📤</span> Send Broadcast
+                            {isSending ? (
+                                <>
+                                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⏳</span>
+                                    Sending...
+                                </>
+                            ) : (
+                                <>
+                                    <span>📤</span> Send Broadcast
+                                </>
+                            )}
                         </button>
                         <button
-                            onClick={(e) => { e.preventDefault(); alert('Preview functionality coming soon!'); }}
+                            onClick={handlePreviewRecipients}
+                            disabled={isLoadingPreview}
                             style={{
                                 width: '100%',
                                 padding: '12px',
-                                background: 'white',
-                                color: '#333',
+                                background: isLoadingPreview ? '#f3f4f6' : 'white',
+                                color: isLoadingPreview ? '#9ca3af' : '#333',
                                 border: '1px solid #e5e7eb',
                                 borderRadius: '6px',
-                                cursor: 'pointer',
+                                cursor: isLoadingPreview ? 'not-allowed' : 'pointer',
                                 fontSize: '14px',
                                 fontWeight: '500',
                                 marginBottom: '10px',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                gap: '8px'
+                                gap: '8px',
+                                opacity: isLoadingPreview ? 0.6 : 1
                             }}
                         >
-                            <span>👁</span> Preview
+                            {isLoadingPreview ? (
+                                <>
+                                    <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⏳</span>
+                                    Loading...
+                                </>
+                            ) : (
+                                <>
+                                    <span>👥</span> Preview Recipients
+                                </>
+                            )}
                         </button>
                         <button
                             onClick={handleSubmit}
@@ -1026,6 +1797,302 @@ const BroadcastManagement = () => {
                     </div>
                 </div>
             )}
+
+            {/* Preview Recipients Modal */}
+            {showPreviewModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000
+                }}>
+                    <div style={{
+                        background: 'white',
+                        padding: '32px',
+                        borderRadius: '12px',
+                        maxWidth: '600px',
+                        width: '90%',
+                        maxHeight: '80vh',
+                        overflow: 'auto'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Preview Recipients</h2>
+                                <button
+                                    onClick={async () => {
+                                        if (formData.id || generatedContentId) {
+                                            setIsLoadingPreview(true);
+                                            try {
+                                                const preview = await previewBroadcastRecipients(formData.id || generatedContentId);
+                                                console.log('[refresh preview] ✅ Preview response:', preview);
+                                                setPreviewRecipients(preview);
+                                            } catch (error) {
+                                                console.error('[refresh preview] error:', error);
+                                            } finally {
+                                                setIsLoadingPreview(false);
+                                            }
+                                        }
+                                    }}
+                                    style={{
+                                        padding: '6px 12px',
+                                        background: '#f3f4f6',
+                                        border: '1px solid #e5e7eb',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                        fontWeight: '500',
+                                        color: '#333'
+                                    }}
+                                >
+                                    🔄 Refresh
+                                </button>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setShowPreviewModal(false);
+                                    setPreviewRecipients(null);
+                                }}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    fontSize: '24px',
+                                    cursor: 'pointer',
+                                    color: '#999'
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        {isLoadingPreview ? (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                                <div style={{ fontSize: '32px', marginBottom: '16px' }}>⏳</div>
+                                <div>Loading recipients...</div>
+                            </div>
+                        ) : previewRecipients ? (
+                            <div>
+                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '16px', textAlign: 'center', background: '#f0fdf4', padding: '8px', borderRadius: '6px', border: '1px solid #86efac' }}>
+                                    🔄 Auto-refreshing every 5 seconds
+                                </div>
+                                <div style={{ marginBottom: '24px', padding: '16px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac' }}>
+                                    <div style={{ fontSize: '14px', fontWeight: '600', color: '#333', marginBottom: '8px' }}>
+                                        Total Recipients: {
+                                            previewRecipients?.data?.totalCount || 
+                                            previewRecipients?.data?.TotalCount || 
+                                            previewRecipients?.totalCount || 
+                                            previewRecipients?.TotalCount || 
+                                            previewRecipients?.count || 
+                                            previewRecipients?.Count ||
+                                            (previewRecipients?.recipients?.length) ||
+                                            (previewRecipients?.data?.recipients?.length) ||
+                                            (Array.isArray(previewRecipients?.Recipients) ? previewRecipients.Recipients.length : 0) ||
+                                            (Array.isArray(previewRecipients?.data?.Recipients) ? previewRecipients.data.Recipients.length : 0) ||
+                                            0
+                                        }
+                                    </div>
+                                    {previewRecipients.byTag && (
+                                        <div style={{ fontSize: '13px', color: '#666' }}>
+                                            Breakdown by tags available
+                                        </div>
+                                    )}
+                                </div>
+
+                                {(previewRecipients.recipients || previewRecipients.Recipients || previewRecipients.data?.recipients || previewRecipients.data?.Recipients) && 
+                                 (Array.isArray(previewRecipients.recipients) || Array.isArray(previewRecipients.Recipients) || Array.isArray(previewRecipients.data?.recipients) || Array.isArray(previewRecipients.data?.Recipients)) && 
+                                 ((previewRecipients.recipients?.length || 0) + (previewRecipients.Recipients?.length || 0) + (previewRecipients.data?.recipients?.length || 0) + (previewRecipients.data?.Recipients?.length || 0) > 0) && (
+                                    <div>
+                                        <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '12px' }}>Sample Recipients:</h3>
+                                        <div style={{ maxHeight: '300px', overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
+                                            {(previewRecipients.recipients || previewRecipients.Recipients || previewRecipients.data?.recipients || previewRecipients.data?.Recipients || []).slice(0, 50).map((recipient, idx) => (
+                                                <div key={idx} style={{ padding: '12px', borderBottom: '1px solid #e5e7eb', fontSize: '14px' }}>
+                                                    <div style={{ fontWeight: '600', color: '#333' }}>
+                                                        {recipient.email || recipient.Email || 'N/A'}
+                                                    </div>
+                                                    {(recipient.name || recipient.Name) && (
+                                                        <div style={{ fontSize: '12px', color: '#666' }}>
+                                                            {recipient.name || recipient.Name}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                <button
+                                    onClick={() => {
+                                        setShowPreviewModal(false);
+                                        setPreviewRecipients(null);
+                                    }}
+                                    style={{
+                                        width: '100%',
+                                        marginTop: '24px',
+                                        padding: '12px',
+                                        background: '#dc2626',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: '600'
+                                    }}
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        ) : (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                                No preview data available
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Statistics Modal */}
+            {showStatisticsModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    background: 'rgba(0,0,0,0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000
+                }}>
+                    <div style={{
+                        background: 'white',
+                        padding: '32px',
+                        borderRadius: '12px',
+                        maxWidth: '600px',
+                        width: '90%',
+                        maxHeight: '80vh',
+                        overflow: 'auto'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <h2 style={{ fontSize: '20px', fontWeight: '700', margin: 0 }}>Broadcast Statistics</h2>
+                                <button
+                                    onClick={refreshStatistics}
+                                    style={{
+                                        padding: '6px 12px',
+                                        background: '#f3f4f6',
+                                        border: '1px solid #e5e7eb',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontSize: '13px',
+                                        fontWeight: '500',
+                                        color: '#333'
+                                    }}
+                                >
+                                    🔄 Refresh
+                                </button>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setShowStatisticsModal(false);
+                                    setStatistics(null);
+                                    setStatisticsBroadcastId(null);
+                                }}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    fontSize: '24px',
+                                    cursor: 'pointer',
+                                    color: '#999'
+                                }}
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        {statistics ? (
+                            <div>
+                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '16px', textAlign: 'center', background: '#f9fafb', padding: '8px', borderRadius: '6px' }}>
+                                    📊 Auto-refreshing every 10 seconds
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
+                                    <div style={{ padding: '16px', background: '#f0fdf4', borderRadius: '8px', border: '1px solid #86efac' }}>
+                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Total Sent</div>
+                                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#059669' }}>
+                                            {statistics.totalSent || statistics.TotalSent || 0}
+                                        </div>
+                                    </div>
+                                    <div style={{ padding: '16px', background: '#eff6ff', borderRadius: '8px', border: '1px solid #93c5fd' }}>
+                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Delivered</div>
+                                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#2563eb' }}>
+                                            {statistics.delivered || statistics.Delivered || 0}
+                                        </div>
+                                    </div>
+                                    <div style={{ padding: '16px', background: '#fef3c7', borderRadius: '8px', border: '1px solid #fcd34d' }}>
+                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Opened</div>
+                                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#f59e0b' }}>
+                                            {statistics.opened || statistics.Opened || 0}
+                                        </div>
+                                    </div>
+                                    <div style={{ padding: '16px', background: '#fef2f2', borderRadius: '8px', border: '1px solid #fecaca' }}>
+                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>Failed</div>
+                                        <div style={{ fontSize: '24px', fontWeight: '700', color: '#dc2626' }}>
+                                            {statistics.failed || statistics.Failed || 0}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {(statistics.openRate || statistics.OpenRate) && (
+                                    <div style={{ padding: '16px', background: '#f9fafb', borderRadius: '8px', marginBottom: '16px' }}>
+                                        <div style={{ fontSize: '14px', color: '#666', marginBottom: '8px' }}>Open Rate</div>
+                                        <div style={{ fontSize: '20px', fontWeight: '700', color: '#333' }}>
+                                            {statistics.openRate || statistics.OpenRate}%
+                                        </div>
+                                    </div>
+                                )}
+
+                                {statistics.sentAt && (
+                                    <div style={{ fontSize: '13px', color: '#666', marginTop: '16px' }}>
+                                        Sent at: {new Date(statistics.sentAt).toLocaleString()}
+                                    </div>
+                                )}
+
+                                <button
+                                    onClick={() => {
+                                        setShowStatisticsModal(false);
+                                        setStatistics(null);
+                                        setStatisticsBroadcastId(null);
+                                    }}
+                                    style={{
+                                        width: '100%',
+                                        marginTop: '24px',
+                                        padding: '12px',
+                                        background: '#dc2626',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        cursor: 'pointer',
+                                        fontSize: '14px',
+                                        fontWeight: '600'
+                                    }}
+                                >
+                                    Close
+                                </button>
+                            </div>
+                        ) : (
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#666' }}>
+                                <div style={{ fontSize: '32px', marginBottom: '16px' }}>⏳</div>
+                                <div>Loading statistics...</div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -1034,9 +2101,11 @@ const BroadcastManagement = () => {
 const normalizeChannels = (raw) => {
     const normalizeVal = (v) => {
         if (!v) return null;
+        if (typeof v === 'number') return (v & 1) ? 'Email' : 'Email';
         const val = v.trim();
-        if (val.toLowerCase() === 'sms') return 'WeChat';
-        return val;
+        // WeChat was removed from backend; map any legacy values back to Email.
+        if (val.toLowerCase() === 'wechat' || val.toLowerCase() === 'sms') return 'Email';
+        return val.toLowerCase() === 'email' ? 'Email' : 'Email';
     };
 
     if (Array.isArray(raw)) return raw.map(normalizeVal).filter(Boolean);
@@ -1052,7 +2121,8 @@ const normalizeChannels = (raw) => {
 const toChannelPayload = (channels) => {
     const mapVal = (v) => {
         if (!v) return null;
-        return v === 'SMS' ? 'WeChat' : v;
+        if (typeof v === 'string' && (v.toLowerCase() === 'wechat' || v.toLowerCase() === 'sms')) return 'Email';
+        return v;
     };
     const arr = Array.isArray(channels) ? channels.map(mapVal).filter(Boolean) : [mapVal(channels)].filter(Boolean);
     if (arr.length === 0) return 'Email';
@@ -1061,16 +2131,9 @@ const toChannelPayload = (channels) => {
 };
 
 // Convert channel names to enum value for backend
-// Backend expects: Email=1, WeChat=2, Both=3 (Email+WeChat)
+// WeChat was removed; always send Email (1).
 const toChannelEnumValue = (channels) => {
-    const arr = Array.isArray(channels) ? channels : [channels].filter(Boolean);
-    if (arr.length === 0) return 1; // Default to Email
-    
-    let value = 0;
-    if (arr.includes('Email')) value |= 1;
-    if (arr.includes('WeChat')) value |= 2;
-    
-    return value || 1; // Default to Email if nothing selected
+    return 1;
 };
 
 export default BroadcastManagement;

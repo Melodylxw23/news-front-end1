@@ -483,26 +483,46 @@ export default function PublishQueue() {
 
   // Handler for AI classification button - fetches suggestions for selected articles
   const handleAssignAIClassifications = async () => {
+    console.log('🔍 [AI Classify DEBUG] Button clicked')
+    console.log('🔍 [AI Classify DEBUG] selectedIds:', selectedIds)
+    
     if (!selectedIds || selectedIds.length === 0) {
+      console.warn('⚠️ [AI Classify DEBUG] No articles selected')
       showToast('Please select articles first', 'error')
       return
     }
+    
+    console.log(`✅ [AI Classify DEBUG] Proceeding with ${selectedIds.length} selected article(s)`)
     setSuggestionLoading(true)
+    
     try {
+      console.log('🚀 [AI Classify DEBUG] Calling suggestPublish API with IDs:', selectedIds)
       const res = await suggestPublish(selectedIds)
+      console.log('📩 [AI Classify DEBUG] API Response:', res)
+      
       const map = {}
       if (Array.isArray(res)) {
+        console.log('📊 [AI Classify DEBUG] Response is array with', res.length, 'items')
         for (const r of res) {
           const id = Number(r.id ?? r.NewsArticleId ?? r.newsArticleId ?? r.articleId ?? r.article?.NewsArticleId)
+          console.log('  - Processing item:', r, '-> ID:', id)
           if (!Number.isNaN(id)) map[id] = r
         }
       } else if (typeof res === 'object' && res !== null) {
+        console.log('📊 [AI Classify DEBUG] Response is object with keys:', Object.keys(res))
         for (const k of Object.keys(res)) {
           const id = Number(k)
           if (!Number.isNaN(id)) map[id] = res[k]
         }
       }
-      setSuggestions(prev => ({ ...(prev || {}), ...map }))
+      
+      console.log('🗺️ [AI Classify DEBUG] Mapped suggestions:', map)
+      setSuggestions(prev => {
+        const updated = { ...(prev || {}), ...map }
+        console.log('📝 [AI Classify DEBUG] Setting suggestions state:', updated)
+        return updated
+      })
+      
       // Persist AI suggestions to drafts so they survive reload and are visible in PublishArticle
       try {
         const dtos = []
@@ -510,17 +530,31 @@ export default function PublishQueue() {
           const id = Number(k)
           if (Number.isNaN(id)) continue
           const v = map[k]
-          if (!v || v.error) continue
+          console.log(`💾 [AI Classify DEBUG] Processing suggestion for ID ${id}:`, v)
+          if (!v || v.error) {
+            console.warn(`⚠️ [AI Classify DEBUG] Skipping ID ${id} - has error or is null`)
+            continue
+          }
           const it = items.find(x => Number(x.id) === id)
           const d = it?.data?.draft
           // If draft already has taxonomy, do not overwrite
           const draftHasTax = d && (d.IndustryTagId || (d.InterestTags && d.InterestTags.length) || (d.InterestTagIds && d.InterestTagIds.length))
-          if (draftHasTax) continue
+          if (draftHasTax) {
+            console.log(`⏭️ [AI Classify DEBUG] Skipping ID ${id} - draft already has taxonomy`)
+            continue
+          }
           const industryTagId = (typeof v.industryTagId !== 'undefined') ? v.industryTagId : null
           const interestTagIds = Array.isArray(v.interestTagIds) ? v.interestTagIds : []
-          if (industryTagId === null && (!interestTagIds || interestTagIds.length === 0)) continue
+          console.log(`  - industryTagId: ${industryTagId}, interestTagIds: ${JSON.stringify(interestTagIds)}`)
+          if (industryTagId === null && (!interestTagIds || interestTagIds.length === 0)) {
+            console.warn(`⚠️ [AI Classify DEBUG] Skipping ID ${id} - no valid tags`)
+            continue
+          }
           dtos.push({ NewsArticleId: id, IndustryTagId: industryTagId, InterestTagIds: interestTagIds })
         }
+        
+        console.log(`💾 [AI Classify DEBUG] DTOs to save (${dtos.length} total):`, dtos)
+        
         if (dtos.length > 0) {
           // Optimistically persist AI suggestions to client-side publishQueue so
           // the UI shows classifications even if the server call fails or is flaky.
@@ -547,30 +581,38 @@ export default function PublishQueue() {
                 if (idx >= 0) updated.splice(idx, 1, newEntry)
                 else updated.push(newEntry)
               }
+              console.log('💾 [AI Classify DEBUG] Saving to localStorage:', updated)
               localStorage.setItem('publishQueue', JSON.stringify(updated))
-            } catch (inner) { /* ignore localStorage errors */ }
+            } catch (inner) { 
+              console.error('❌ [AI Classify DEBUG] localStorage error:', inner)
+            }
 
+            console.log('📤 [AI Classify DEBUG] Calling batchSaveDrafts with DTOs')
             await batchSaveDrafts(dtos)
+            console.log('✅ [AI Classify DEBUG] batchSaveDrafts succeeded')
+            
             loadQueue()
             showToast(`Applied AI suggestions to ${dtos.length} draft(s)`, 'success')
           } catch (e) {
-            console.error('Failed to save AI suggestions', e)
+            console.error('❌ [AI Classify DEBUG] Failed to save AI suggestions:', e)
             // We already attempted client-side persistence; inform user server persist failed.
             showToast('Failed to persist AI suggestions to server (saved locally)', 'error')
           }
         } else {
           const successCount = Object.keys(map).filter(k => !map[k].error).length
+          console.log(`ℹ️ [AI Classify DEBUG] No DTOs to save. Success count: ${successCount}`)
           if (successCount > 0) showToast(`AI classifications available for ${successCount} article(s)`, 'info')
           else showToast('AI could not classify the selected articles', 'error')
         }
       } catch (e) {
-        console.error('persist AI suggestions error', e)
+        console.error('❌ [AI Classify DEBUG] persist AI suggestions error:', e)
       }
     } catch (e) {
-      console.error('AI classification failed', e)
+      console.error('❌ [AI Classify DEBUG] AI classification failed:', e)
       showToast('AI classification failed: ' + (e.message || e), 'error')
     } finally {
       setSuggestionLoading(false)
+      console.log('🏁 [AI Classify DEBUG] Finished')
     }
   }
 
@@ -1154,20 +1196,63 @@ export default function PublishQueue() {
                 </div>
               </div>
 
-              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8, fontSize: 12 }}>
-                <thead>
-                  <tr style={{ textAlign: 'left', borderBottom: '1px solid #e8e8e8', background: '#fafafa' }}>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', width: 32 }}><input type="checkbox" checked={isAllSelected} onChange={toggleSelectAll} style={{ width: 14, height: 14 }} /></th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Title</th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Industry</th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Topics</th>
-                    {/* AI Suggestion column removed - suggestions now show under Industry / Topics */}
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Status</th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageItems.map((it) => {
+              {pageItems.length === 0 ? (
+                <div style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '80px 20px',
+                  textAlign: 'center'
+                }}>
+                  <div style={{ 
+                    fontSize: 48, 
+                    marginBottom: 16,
+                    opacity: 0.4
+                  }}>
+                    {activeTab === 'ready' ? '📋' : activeTab === 'drafted' ? '✏️' : activeTab === 'scheduled' ? '📅' : activeTab === 'published' ? '✅' : '🔄'}
+                  </div>
+                  <h3 style={{ 
+                    fontSize: 18, 
+                    fontWeight: 600, 
+                    color: '#333', 
+                    marginBottom: 8 
+                  }}>
+                    No {activeTab === 'ready' ? 'Ready' : activeTab === 'drafted' ? 'Drafted' : activeTab === 'scheduled' ? 'Scheduled' : activeTab === 'published' ? 'Published' : 'Unpublished'} Articles
+                  </h3>
+                  <p style={{ 
+                    fontSize: 14, 
+                    color: '#888', 
+                    maxWidth: 400,
+                    lineHeight: 1.5
+                  }}>
+                    {activeTab === 'ready' 
+                      ? 'Articles you add to the publish queue will appear here. Start by browsing articles and adding them to your queue.'
+                      : activeTab === 'drafted'
+                      ? 'Save articles as drafts to work on them later. Drafts will appear here once you save them.'
+                      : activeTab === 'scheduled'
+                      ? 'Schedule articles for future publishing. Scheduled articles will appear here.'
+                      : activeTab === 'published'
+                      ? 'Published articles will appear here once you publish them to your platform.'
+                      : 'Articles you unpublish will appear here for review or re-publishing.'
+                    }
+                  </p>
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8, fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', borderBottom: '1px solid #e8e8e8', background: '#fafafa' }}>
+                      <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', width: 32 }}><input type="checkbox" checked={isAllSelected} onChange={toggleSelectAll} style={{ width: 14, height: 14 }} /></th>
+                      <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Title</th>
+                      <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Industry</th>
+                      <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Topics</th>
+                      {/* AI Suggestion column removed - suggestions now show under Industry / Topics */}
+                      <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Status</th>
+                      <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.map((it) => {
                     const a = it.data?.article || {}
                     const d = it.data?.draft || {}
                     const nid = it.id
@@ -1391,6 +1476,7 @@ export default function PublishQueue() {
                   })}
                 </tbody>
               </table>
+              )}
 
               {previewOpen && (
                 <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }} onClick={() => setPreviewOpen(false)}>

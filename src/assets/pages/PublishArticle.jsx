@@ -5,17 +5,19 @@ import { getPublishDraft, batchPublish, getArticle, patchPublishDraft, generateH
 const palette = {
   bg: '#fbf8f6',
   card: '#ffffff',
-  primary: '#1e73d1',
+  primary: '#BA0006',
   accent: '#e07a16',
   success: '#1e7a3a',
-  muted: '#666'
+  muted: '#666',
+  border: '#e5e7eb',
+  lightGray: '#f9fafb'
 }
 
 const styles = {
-  page: { padding: '12px 20px', background: 'transparent', minHeight: '100vh', boxSizing: 'border-box' },
-  card: { background: palette.card, padding: 12, borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.05)', boxSizing: 'border-box' },
-  sidebar: { background: palette.card, padding: 12, borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,0.05)' },
-  heading: { fontSize: 13, fontWeight: 700, color: '#444', marginBottom: 4 }
+  page: { padding: '24px 32px', background: 'transparent', minHeight: '100vh', boxSizing: 'border-box' },
+  card: { background: palette.card, padding: 24, borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)', boxSizing: 'border-box', border: '1px solid #f0f0f0' },
+  sidebar: { background: palette.card, padding: 24, borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)', border: '1px solid #f0f0f0' },
+  heading: { fontSize: 14, fontWeight: 700, color: '#1f2937', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }
 }
 
 export default function PublishArticle() {
@@ -767,148 +769,716 @@ export default function PublishArticle() {
     <div className="content-full">
       <div className="page-inner">
         <div style={styles.page}>
-          <div style={{ marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <h1 style={{ fontSize: 18, margin: 0, fontWeight: 700 }}>Publish Article</h1>
-              <span style={{ color: '#999', fontSize: 12 }}>#{id}</span>
+          {/* Header */}
+          <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 16, borderBottom: '2px solid #f0f0f0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <h1 style={{ fontSize: 24, margin: 0, fontWeight: 700, color: '#111', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontSize: 28 }}>📝</span>
+                Publish Article
+              </h1>
+              <span style={{ 
+                padding: '4px 12px', 
+                borderRadius: 20, 
+                background: 'linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%)', 
+                color: '#6b7280', 
+                fontSize: 13,
+                fontWeight: 600,
+                border: '1px solid #d1d5db'
+              }}>
+                #{id}
+              </span>
             </div>
-            <button onClick={() => navigate('/consultant/publish-queue')} style={{ padding: '5px 10px', borderRadius: 6, border: '1px solid #e6e6e6', background: '#fff', fontSize: 12 }}>Back</button>
+            <button 
+              onClick={() => navigate('/consultant/publish-queue')} 
+              style={{ 
+                padding: '10px 20px', 
+                borderRadius: 8, 
+                border: '1px solid #e5e7eb', 
+                background: 'white', 
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                color: '#374151',
+                transition: 'all 0.2s',
+                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+              }}
+              onMouseOver={e => {
+                e.currentTarget.style.background = '#f9fafb'
+                e.currentTarget.style.borderColor = '#d1d5db'
+              }}
+              onMouseOut={e => {
+                e.currentTarget.style.background = 'white'
+                e.currentTarget.style.borderColor = '#e5e7eb'
+              }}
+            >
+              ← Back to Queue
+            </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 12, height: 'calc(100vh - 90px)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 24, height: 'calc(100vh - 140px)' }}>
+            {/* Left Panel - Article Preview */}
             <div style={{ ...styles.card, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexShrink: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>Article Preview</div>
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <button onClick={() => setLang('en')} style={{ padding: '4px 8px', borderRadius: 4, background: lang === 'en' ? '#c92b2b' : '#f5f5f5', color: lang === 'en' ? 'white' : '#444', border: 'none', fontSize: 11 }}>EN</button>
-                  <button onClick={() => setLang('zh')} style={{ padding: '4px 8px', borderRadius: 4, background: lang === 'zh' ? '#c92b2b' : '#f5f5f5', color: lang === 'zh' ? 'white' : '#444', border: 'none', fontSize: 11 }}>ZH</button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexShrink: 0, paddingBottom: 12, borderBottom: '1px solid #f0f0f0' }}>
+                <div style={{ fontWeight: 700, fontSize: 16, color: '#111', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>📄</span>
+                  Article Preview
+                </div>
+                <div style={{ display: 'flex', gap: 6, background: '#f9fafb', padding: 4, borderRadius: 8, border: '1px solid #e5e7eb' }}>
+                  <button 
+                    onClick={() => setLang('en')} 
+                    style={{ 
+                      padding: '6px 16px', 
+                      borderRadius: 6, 
+                      background: lang === 'en' ? 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)' : 'transparent', 
+                      color: lang === 'en' ? 'white' : '#6b7280', 
+                      border: 'none', 
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      boxShadow: lang === 'en' ? '0 2px 4px rgba(186, 0, 6, 0.2)' : 'none'
+                    }}
+                  >
+                    EN
+                  </button>
+                  <button 
+                    onClick={() => setLang('zh')} 
+                    style={{ 
+                      padding: '6px 16px', 
+                      borderRadius: 6, 
+                      background: lang === 'zh' ? 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)' : 'transparent', 
+                      color: lang === 'zh' ? 'white' : '#6b7280', 
+                      border: 'none', 
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      boxShadow: lang === 'zh' ? '0 2px 4px rgba(186, 0, 6, 0.2)' : 'none'
+                    }}
+                  >
+                    中文
+                  </button>
                 </div>
               </div>
 
-              <div style={{ marginBottom: 6, flexShrink: 0 }}>
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Title</div>
-                <div style={{ padding: 6, borderRadius: 6, border: '1px solid #eee', background: '#fafafa', fontSize: 13, fontWeight: 600 }}>{lang === 'en' ? (title.en || '—') : (title.zh || '—')}</div>
+              <div style={{ marginBottom: 12, flexShrink: 0 }}>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Title</div>
+                <div style={{ 
+                  padding: '12px 16px', 
+                  borderRadius: 8, 
+                  border: '1px solid #e5e7eb', 
+                  background: '#fafbfc', 
+                  fontSize: 15, 
+                  fontWeight: 600,
+                  color: '#111',
+                  lineHeight: 1.5
+                }}>
+                  {lang === 'en' ? (title.en || '—') : (title.zh || '—')}
+                </div>
               </div>
 
-              <div style={{ marginBottom: 6, flexShrink: 0 }}>
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Summary</div>
-                <div style={{ padding: 6, borderRadius: 6, border: '1px solid #eee', background: '#fafafa', fontSize: 12, maxHeight: 60, overflow: 'auto' }}>{lang === 'en' ? (summary.en || '—') : (summary.zh || '—')}</div>
+              <div style={{ marginBottom: 12, flexShrink: 0 }}>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Summary</div>
+                <div style={{ 
+                  padding: '12px 16px', 
+                  borderRadius: 8, 
+                  border: '1px solid #e5e7eb', 
+                  background: '#fafbfc', 
+                  fontSize: 13, 
+                  maxHeight: 80, 
+                  overflow: 'auto',
+                  lineHeight: 1.6,
+                  color: '#4b5563'
+                }}>
+                  {lang === 'en' ? (summary.en || '—') : (summary.zh || '—')}
+                </div>
               </div>
 
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>Content</div>
-                <div style={{ whiteSpace: 'pre-wrap', padding: 8, border: '1px solid #eee', borderRadius: 6, flex: 1, overflow: 'auto', fontSize: 12, color: '#333', background: '#fafafa' }}>{lang === 'en' ? full.en : full.zh}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Full Content</div>
+                <div style={{ 
+                  whiteSpace: 'pre-wrap', 
+                  padding: '16px', 
+                  border: '1px solid #e5e7eb', 
+                  borderRadius: 8, 
+                  flex: 1, 
+                  overflow: 'auto', 
+                  fontSize: 13, 
+                  color: '#374151', 
+                  background: '#fafbfc',
+                  lineHeight: 1.7
+                }}>
+                  {lang === 'en' ? full.en : full.zh}
+                </div>
               </div>
             </div>
 
+            {/* Right Panel - Publishing Controls */}
             <div style={{ ...styles.sidebar, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
-              <div style={{ marginBottom: 8 }}>
-                <div style={styles.heading}>Publish Controls</div>
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                  <span style={{ padding: '3px 8px', borderRadius: 12, background: '#f0fdf4', fontSize: 10, color: '#16a34a' }}>ZH ✓</span>
-                  <span style={{ padding: '3px 8px', borderRadius: 12, background: '#f0fdf4', fontSize: 10, color: '#16a34a' }}>EN ✓</span>
+              <div style={{ marginBottom: 20 }}>
+                <div style={styles.heading}>
+                  <span>🌐</span>
+                  Translation Status
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{ 
+                    padding: '6px 14px', 
+                    borderRadius: 20, 
+                    background: 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)', 
+                    fontSize: 11, 
+                    color: '#166534',
+                    fontWeight: 600,
+                    border: '1px solid #86efac',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}>
+                    <span>✓</span> Chinese Available
+                  </span>
+                  <span style={{ 
+                    padding: '6px 14px', 
+                    borderRadius: 20, 
+                    background: 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)', 
+                    fontSize: 11, 
+                    color: '#166534',
+                    fontWeight: 600,
+                    border: '1px solid #86efac',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}>
+                    <span>✓</span> English Available
+                  </span>
                 </div>
               </div>
 
-              <div style={{ marginBottom: 8 }}>
-                <div style={styles.heading}>Hero Image</div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={styles.heading}>
+                  <span>🖼️</span>
+                  Hero Image
+                </div>
                 {displayedHeroUrl ? (
-                  <div style={{ background: '#fafafa', padding: 6, borderRadius: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <img src={displayedHeroUrl} alt="hero" style={{ width: 60, height: 40, objectFit: 'cover', borderRadius: 4 }} onError={(e) => { e.currentTarget.style.display = 'none' }} />
-                    <div style={{ flex: 1, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <button style={{ padding: '3px 6px', borderRadius: 4, background: '#1976d2', color: '#fff', border: 'none', fontSize: 10, cursor: 'pointer' }} onClick={() => requestGenerateHeroImage()} disabled={loading}>{loading ? '...' : 'Generate'}</button>
-                      <button style={{ padding: '3px 6px', borderRadius: 4, background: '#fff', color: '#c92b2b', border: '1px solid #fcc', fontSize: 10, cursor: 'pointer' }} onClick={() => { const d = { ...(data?.draft || {}) }; d.HeroImageUrl = null; d.HeroImageSource = null; setData({ ...(data || {}), draft: d }); showToast('Removed'); }}>Remove</button>
+                  <div style={{ 
+                    background: 'linear-gradient(135deg, #fafbfc 0%, #f3f4f6 100%)', 
+                    padding: 12, 
+                    borderRadius: 10, 
+                    border: '1px solid #e5e7eb'
+                  }}>
+                    <img 
+                      src={displayedHeroUrl} 
+                      alt="hero" 
+                      style={{ 
+                        width: '100%', 
+                        height: 160, 
+                        objectFit: 'cover', 
+                        borderRadius: 8,
+                        marginBottom: 12,
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                        background: '#f3f4f6'
+                      }} 
+                      onError={(e) => { 
+                        console.error('Hero image failed to load:', displayedHeroUrl)
+                        e.currentTarget.style.border = '2px dashed #fca5a5'
+                        e.currentTarget.style.background = '#fef2f2'
+                      }} 
+                    />
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button 
+                        style={{ 
+                          flex: 1,
+                          padding: '8px 12px', 
+                          borderRadius: 8, 
+                          background: loading ? '#e5e7eb' : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', 
+                          color: loading ? '#9ca3af' : '#fff', 
+                          border: 'none', 
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: loading ? 'not-allowed' : 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                          boxShadow: loading ? 'none' : '0 2px 4px rgba(59, 130, 246, 0.3)',
+                          transition: 'all 0.2s'
+                        }} 
+                        onClick={() => {
+                          if (!loading) {
+                            console.log('Regenerating hero image for article', id)
+                            requestGenerateHeroImage()
+                          }
+                        }} 
+                        disabled={loading}
+                        onMouseOver={e => {
+                          if (!loading) e.currentTarget.style.transform = 'translateY(-1px)'
+                        }}
+                        onMouseOut={e => {
+                          if (!loading) e.currentTarget.style.transform = 'translateY(0)'
+                        }}
+                      >
+                        {loading ? (
+                          <>
+                            <span style={{ 
+                              display: 'inline-block', 
+                              width: 12, 
+                              height: 12, 
+                              border: '2px solid #d1d5db', 
+                              borderTopColor: '#9ca3af', 
+                              borderRadius: '50%', 
+                              animation: 'spin 1s linear infinite' 
+                            }} />
+                            Generating...
+                          </>
+                        ) : (
+                          <>
+                            <span>✨</span>
+                            Regenerate
+                          </>
+                        )}
+                      </button>
+                      <button 
+                        style={{ 
+                          padding: '8px 12px', 
+                          borderRadius: 8, 
+                          background: 'white', 
+                          color: '#ef4444', 
+                          border: '1px solid #fee2e2', 
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }} 
+                        onClick={() => { 
+                          if (window.confirm('Remove hero image?')) {
+                            const d = { ...(data?.draft || {}) }
+                            d.HeroImageUrl = null
+                            d.HeroImageSource = null
+                            setData({ ...(data || {}), draft: d })
+                            showToast('Removed')
+                          }
+                        }}
+                        onMouseOver={e => {
+                          e.currentTarget.style.background = '#fef2f2'
+                          e.currentTarget.style.borderColor = '#fecaca'
+                        }}
+                        onMouseOut={e => {
+                          e.currentTarget.style.background = 'white'
+                          e.currentTarget.style.borderColor = '#fee2e2'
+                        }}
+                      >
+                        🗑️
+                      </button>
                     </div>
                   </div>
                 ) : (
-                  <div style={{ padding: 8, border: '1px dashed #ddd', borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ color: '#999', fontSize: 11 }}>No image</span>
-                    <button style={{ padding: '3px 6px', borderRadius: 4, background: '#1976d2', color: '#fff', border: 'none', fontSize: 10, cursor: 'pointer' }} onClick={() => requestGenerateHeroImage()} disabled={loading}>{loading ? '...' : 'Generate'}</button>
+                  <div style={{ 
+                    padding: 20, 
+                    border: '2px dashed #d1d5db', 
+                    borderRadius: 10, 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    gap: 12,
+                    background: '#fafbfc'
+                  }}>
+                    <div style={{ fontSize: 40, opacity: 0.3 }}>🖼️</div>
+                    <span style={{ color: '#9ca3af', fontSize: 12, fontWeight: 500 }}>
+                      {loading ? 'Generating image...' : 'No hero image yet'}
+                    </span>
+                    <button 
+                      style={{ 
+                        padding: '8px 16px', 
+                        borderRadius: 8, 
+                        background: loading ? '#e5e7eb' : 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)', 
+                        color: loading ? '#9ca3af' : '#fff', 
+                        border: 'none', 
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: loading ? 'not-allowed' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        boxShadow: loading ? 'none' : '0 2px 4px rgba(59, 130, 246, 0.3)',
+                        transition: 'all 0.2s'
+                      }} 
+                      onClick={() => {
+                        if (!loading) {
+                          console.log('Generating hero image for article', id)
+                          requestGenerateHeroImage()
+                        }
+                      }} 
+                      disabled={loading}
+                      onMouseOver={e => {
+                        if (!loading) e.currentTarget.style.transform = 'translateY(-1px)'
+                      }}
+                      onMouseOut={e => {
+                        if (!loading) e.currentTarget.style.transform = 'translateY(0)'
+                      }}
+                    >
+                      {loading ? (
+                        <>
+                          <span style={{ 
+                            display: 'inline-block', 
+                            width: 12, 
+                            height: 12, 
+                            border: '2px solid #d1d5db', 
+                            borderTopColor: '#9ca3af', 
+                            borderRadius: '50%', 
+                            animation: 'spin 1s linear infinite' 
+                          }} />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <span>✨</span>
+                          Generate Image
+                        </>
+                      )}
+                    </button>
                   </div>
                 )}
               </div>
 
-              <div style={{ marginBottom: 8 }}>
-                <div style={styles.heading}>Industry</div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={styles.heading}>
+                  <span>🏢</span>
+                  Industry Tag
+                </div>
                 {(() => {
                   const industries = data?.industries || data?.IndustryTags || data?.industryTags || data?.industriesList || []
                   const current = data?.draft?.IndustryTagId ?? data?.draft?.IndustryTag?.IndustryTagId ?? data?.draft?.IndustryTag?.id ?? ''
                   if (industries && industries.length > 0) {
                     return (
-                      <select value={String(current)} onChange={e => { const val = e.target.value; const picked = industries.find(x => String(x.id) === val || String(x.IndustryTagId ?? x.id) === val); setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), IndustryTag: picked || null, IndustryTagId: picked ? (picked.IndustryTagId ?? picked.id) : null } })) }} style={{ padding: '6px', borderRadius: 6, border: '1px solid #ddd', width: '100%', fontSize: 12 }}>
-                        <option value=''>Unassigned</option>
-                        {industries.map((it, i) => (<option key={i} value={String(it.id ?? it.IndustryTagId)}>{getDisplayName(it) || String(it.id ?? it.IndustryTagId)}</option>))}
+                      <select 
+                        value={String(current)} 
+                        onChange={e => { 
+                          const val = e.target.value; 
+                          const picked = industries.find(x => String(x.id) === val || String(x.IndustryTagId ?? x.id) === val); 
+                          setData(prev => ({ 
+                            ...(prev || {}), 
+                            draft: { 
+                              ...(prev?.draft || {}), 
+                              IndustryTag: picked || null, 
+                              IndustryTagId: picked ? (picked.IndustryTagId ?? picked.id) : null 
+                            } 
+                          })) 
+                        }} 
+                        style={{ 
+                          padding: '10px 12px', 
+                          borderRadius: 8, 
+                          border: '1px solid #e5e7eb', 
+                          width: '100%', 
+                          fontSize: 13,
+                          fontWeight: 500,
+                          color: '#374151',
+                          background: 'white',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        <option value=''>Select Industry...</option>
+                        {industries.map((it, i) => (
+                          <option key={i} value={String(it.id ?? it.IndustryTagId)}>
+                            {getDisplayName(it) || String(it.id ?? it.IndustryTagId)}
+                          </option>
+                        ))}
                       </select>
                     )
                   }
                   const fallbackId = data?.draft?.IndustryTagId ?? data?.draft?.IndustryTag?.IndustryTagId ?? data?.draft?.IndustryTag?.id
                   const attachedList = data?.industries || []
-                  if (fallbackId || fallbackId === 0) { const found = attachedList.find(x => String(x.id ?? x.IndustryTagId ?? x.industryTagId) === String(fallbackId)); const name = found ? (found.NameEN || found.NameZH || found.Name || found.name || String(fallbackId)) : (getDisplayName(data?.draft?.IndustryTag) || String(fallbackId)); return <div style={{ padding: '6px', borderRadius: 6, border: '1px solid #ddd', fontSize: 12 }}>{name}</div> }
-                  return <div style={{ padding: '6px', borderRadius: 6, border: '1px solid #ddd', fontSize: 12, color: '#999' }}>{getDisplayName(data?.draft?.IndustryTag) || 'Unassigned'}</div>
+                  if (fallbackId || fallbackId === 0) { 
+                    const found = attachedList.find(x => String(x.id ?? x.IndustryTagId ?? x.industryTagId) === String(fallbackId)); 
+                    const name = found ? (found.NameEN || found.NameZH || found.Name || found.name || String(fallbackId)) : (getDisplayName(data?.draft?.IndustryTag) || String(fallbackId)); 
+                    return (
+                      <div style={{ 
+                        padding: '10px 12px', 
+                        borderRadius: 8, 
+                        border: '1px solid #e5e7eb', 
+                        fontSize: 13,
+                        fontWeight: 500,
+                        color: '#374151',
+                        background: 'linear-gradient(135deg, #fef3f2 0%, #fee2e2 100%)',
+                        border: '1px solid #fca5a5'
+                      }}>
+                        {name}
+                      </div>
+                    )
+                  }
+                  return (
+                    <div style={{ 
+                      padding: '10px 12px', 
+                      borderRadius: 8, 
+                      border: '1px solid #e5e7eb', 
+                      fontSize: 13, 
+                      color: '#9ca3af',
+                      background: '#fafbfc'
+                    }}>
+                      {getDisplayName(data?.draft?.IndustryTag) || 'Not assigned'}
+                    </div>
+                  )
                 })()}
               </div>
 
-              <div style={{ marginBottom: 8 }}>
-                <div style={styles.heading}>Topics Of Interest</div>
+              <div style={{ marginBottom: 20 }}>
+                <div style={styles.heading}>
+                  <span>🏷️</span>
+                  Topics Of Interest
+                </div>
                 {(() => {
                   const interests = data?.interests || data?.InterestTags || data?.interestTags || []
                   const draft = data?.draft || {}
                   const draftInterestIds = Array.isArray(draft?.InterestTagIds) ? draft.InterestTagIds.map(x => String(x)) : (Array.isArray(draft?.InterestTags) ? draft.InterestTags.map(t => String(t.InterestTagId ?? t.id)) : [])
                   if (interests && interests.length > 0) {
                     return (
-                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 100, overflow: 'auto' }}>
+                      <div style={{ 
+                        display: 'flex', 
+                        gap: 8, 
+                        flexWrap: 'wrap', 
+                        maxHeight: 140, 
+                        overflow: 'auto',
+                        padding: '8px',
+                        background: '#fafbfc',
+                        borderRadius: 8,
+                        border: '1px solid #e5e7eb'
+                      }}>
                         {interests.map((it, idx) => {
                           const idVal = it.interestTagId ?? it.InterestTagId ?? it.id
                           const idStr = String(idVal)
                           const checked = draftInterestIds.includes(idStr)
                           return (
-                            <label key={idx} style={{ display: 'flex', gap: 4, alignItems: 'center', padding: '3px 6px', borderRadius: 10, background: checked ? '#fee2e2' : '#f5f5f5', border: checked ? '1px solid #fca5a5' : '1px solid #e5e5e5', cursor: 'pointer', fontSize: 11 }}>
-                              <input type="checkbox" checked={checked} style={{ width: 12, height: 12 }} onChange={e => { const curIds = Array.isArray(draft?.InterestTagIds) ? (draft.InterestTagIds || []).slice() : (Array.isArray(draft?.InterestTags) ? (draft.InterestTags || []).map(t => (t.InterestTagId ?? t.id)) : []); const sid = idVal; if (e.target.checked) { curIds.push(sid) } else { const i = curIds.findIndex(x => String(x) === idStr); if (i >= 0) curIds.splice(i, 1) }; const normalizedIds = Array.from(new Set(curIds.map(x => String(x)))).map(x => Number(x)).filter(x => !Number.isNaN(x)); const curObjs = normalizedIds.map(id => interests.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id))).filter(Boolean); setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), InterestTagIds: normalizedIds, InterestTags: curObjs } })) }} />
-                              <span style={{ color: checked ? '#b91c1c' : '#666' }}>{getDisplayName(it) || idStr}</span>
+                            <label 
+                              key={idx} 
+                              style={{ 
+                                display: 'flex', 
+                                gap: 6, 
+                                alignItems: 'center', 
+                                padding: '8px 12px', 
+                                borderRadius: 20, 
+                                background: checked ? 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)' : 'white', 
+                                border: checked ? '1.5px solid #fca5a5' : '1px solid #e5e7eb', 
+                                cursor: 'pointer', 
+                                fontSize: 12,
+                                fontWeight: 500,
+                                transition: 'all 0.2s',
+                                boxShadow: checked ? '0 2px 4px rgba(252, 165, 165, 0.2)' : 'none'
+                              }}
+                              onMouseOver={e => {
+                                if (!checked) {
+                                  e.currentTarget.style.background = '#f9fafb'
+                                  e.currentTarget.style.borderColor = '#d1d5db'
+                                }
+                              }}
+                              onMouseOut={e => {
+                                if (!checked) {
+                                  e.currentTarget.style.background = 'white'
+                                  e.currentTarget.style.borderColor = '#e5e7eb'
+                                }
+                              }}
+                            >
+                              <input 
+                                type="checkbox" 
+                                checked={checked} 
+                                style={{ width: 14, height: 14, cursor: 'pointer' }} 
+                                onChange={e => { 
+                                  const curIds = Array.isArray(draft?.InterestTagIds) ? (draft.InterestTagIds || []).slice() : (Array.isArray(draft?.InterestTags) ? (draft.InterestTags || []).map(t => (t.InterestTagId ?? t.id)) : []); 
+                                  const sid = idVal; 
+                                  if (e.target.checked) { 
+                                    curIds.push(sid) 
+                                  } else { 
+                                    const i = curIds.findIndex(x => String(x) === idStr); 
+                                    if (i >= 0) curIds.splice(i, 1) 
+                                  }; 
+                                  const normalizedIds = Array.from(new Set(curIds.map(x => String(x)))).map(x => Number(x)).filter(x => !Number.isNaN(x)); 
+                                  const curObjs = normalizedIds.map(id => interests.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id))).filter(Boolean); 
+                                  setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), InterestTagIds: normalizedIds, InterestTags: curObjs } })) 
+                                }} 
+                              />
+                              <span style={{ color: checked ? '#b91c1c' : '#6b7280' }}>
+                                {getDisplayName(it) || idStr}
+                              </span>
                             </label>
                           )
                         })}
                       </div>
                     )
                   }
-                  const fallbackNames = []; if (Array.isArray(draft?.InterestTags) && draft.InterestTags.length > 0) { for (const t of draft.InterestTags) fallbackNames.push(t.NameEN ?? t.NameZH ?? t.Name ?? t.name ?? String(t.InterestTagId ?? t.id)) } else if (Array.isArray(draft?.InterestTagIds) && draft.InterestTagIds.length > 0) { const list = data?.interests || []; for (const id of draft.InterestTagIds) { const found = list.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id)); fallbackNames.push(found ? (found.NameEN || found.NameZH || found.Name || found.name || String(id)) : String(id)) } }
-                  return <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>{fallbackNames.map((n, i) => (<span key={i} style={{ padding: '3px 6px', borderRadius: 10, background: '#fee2e2', fontSize: 11, color: '#b91c1c' }}>{n}</span>))}</div>
+                  const fallbackNames = []; 
+                  if (Array.isArray(draft?.InterestTags) && draft.InterestTags.length > 0) { 
+                    for (const t of draft.InterestTags) fallbackNames.push(t.NameEN ?? t.NameZH ?? t.Name ?? t.name ?? String(t.InterestTagId ?? t.id)) 
+                  } else if (Array.isArray(draft?.InterestTagIds) && draft.InterestTagIds.length > 0) { 
+                    const list = data?.interests || []; 
+                    for (const id of draft.InterestTagIds) { 
+                      const found = list.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id)); 
+                      fallbackNames.push(found ? (found.NameEN || found.NameZH || found.Name || found.name || String(id)) : String(id)) 
+                    } 
+                  }
+                  return (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '12px', background: '#fafbfc', borderRadius: 8, border: '1px solid #e5e7eb', minHeight: 50 }}>
+                      {fallbackNames.length > 0 ? fallbackNames.map((n, i) => (
+                        <span 
+                          key={i} 
+                          style={{ 
+                            padding: '6px 12px', 
+                            borderRadius: 20, 
+                            background: 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)', 
+                            fontSize: 12, 
+                            color: '#b91c1c',
+                            fontWeight: 500,
+                            border: '1px solid #fca5a5'
+                          }}
+                        >
+                          {n}
+                        </span>
+                      )) : (
+                        <span style={{ color: '#9ca3af', fontSize: 12, fontStyle: 'italic' }}>
+                          No topics selected
+                        </span>
+                      )}
+                    </div>
+                  )
                 })()}
               </div>
 
-              <div style={{ marginTop: 'auto', paddingTop: 8, borderTop: '1px solid #eee' }}>
-                <div style={styles.heading}>Actions</div>
+              {/* Publish readiness indicator */}
+              <div style={{ 
+                marginBottom: 20,
+                padding: '12px 16px',
+                borderRadius: 10,
+                background: canPublish ? 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)' : 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)',
+                border: canPublish ? '1px solid #86efac' : '1px solid #fbbf24'
+              }}>
+                <div style={{ 
+                  fontSize: 12, 
+                  fontWeight: 600, 
+                  color: canPublish ? '#166534' : '#92400e',
+                  marginBottom: 8,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8
+                }}>
+                  <span style={{ fontSize: 16 }}>{canPublish ? '✅' : '⚠️'}</span>
+                  {canPublish ? 'Ready to Publish' : 'Requirements Not Met'}
+                </div>
+                <div style={{ fontSize: 11, color: canPublish ? '#15803d' : '#78350f', lineHeight: 1.5 }}>
+                  {canPublish 
+                    ? 'All requirements satisfied. You can now publish or schedule this article.'
+                    : 'Please ensure: Hero image, Industry tag, and at least one Topic are assigned.'
+                  }
+                </div>
+              </div>
+
+              <div style={{ marginTop: 'auto', paddingTop: 20, borderTop: '2px solid #f0f0f0' }}>
+                <div style={styles.heading}>
+                  <span>🚀</span>
+                  Publishing Actions
+                </div>
                 
                 {/* Save as Draft */}
                 <button 
                   onClick={saveDraft} 
-                  style={{ width: '100%', background: '#f5f5f5', color: '#333', border: '1px solid #ddd', padding: '8px 10px', borderRadius: 6, fontSize: 11, fontWeight: 500, marginBottom: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  style={{ 
+                    width: '100%', 
+                    background: 'white', 
+                    color: '#374151', 
+                    border: '1.5px solid #e5e7eb', 
+                    padding: '12px 16px', 
+                    borderRadius: 10, 
+                    fontSize: 13, 
+                    fontWeight: 600, 
+                    marginBottom: 12, 
+                    cursor: 'pointer', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: 8,
+                    transition: 'all 0.2s',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                  }}
+                  onMouseOver={e => {
+                    e.currentTarget.style.background = '#f9fafb'
+                    e.currentTarget.style.borderColor = '#d1d5db'
+                    e.currentTarget.style.transform = 'translateY(-1px)'
+                  }}
+                  onMouseOut={e => {
+                    e.currentTarget.style.background = 'white'
+                    e.currentTarget.style.borderColor = '#e5e7eb'
+                    e.currentTarget.style.transform = 'translateY(0)'
+                  }}
                 >
-                  <span>💾</span> Save as Draft
+                  <span style={{ fontSize: 16 }}>💾</span> 
+                  Save as Draft
                 </button>
 
                 {/* Schedule */}
-                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 6, padding: 8, marginBottom: 6 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                    <span>📅</span>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: '#92400e' }}>Schedule for later</span>
+                <div style={{ 
+                  background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)', 
+                  border: '1.5px solid #fcd34d', 
+                  borderRadius: 10, 
+                  padding: 16, 
+                  marginBottom: 12 
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                    <span style={{ fontSize: 20 }}>📅</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#78350f' }}>Schedule for Later</span>
                   </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                     <input 
                       type="datetime-local" 
                       value={scheduledAt} 
                       onChange={e => setScheduledAt(e.target.value)} 
-                      style={{ flex: 1, padding: 6, borderRadius: 4, border: '1px solid #ddd', fontSize: 11 }} 
+                      style={{ 
+                        flex: 1, 
+                        padding: '10px 12px', 
+                        borderRadius: 8, 
+                        border: '1px solid #d97706', 
+                        fontSize: 12,
+                        fontWeight: 500,
+                        color: '#92400e',
+                        background: 'white'
+                      }} 
                     />
-                    <button 
-                      onClick={() => handlePublish('schedule')} 
-                      disabled={!scheduledAt || !canPublish}
-                      title={!canPublish ? 'Assign Hero, Industry, and at least one Topic before scheduling/publishing' : undefined}
-                      style={{ padding: '6px 10px', borderRadius: 4, background: (scheduledAt && canPublish) ? '#f59e0b' : '#ccc', color: 'white', border: 'none', fontSize: 10, fontWeight: 600, cursor: (scheduledAt && canPublish) ? 'pointer' : 'not-allowed' }}
-                    >
-                      {(data?.draft?.ScheduledAt || data?.draft?.scheduledAt) ? 'Re-schedule' : 'Schedule'}
-                    </button>
                   </div>
+                  <button 
+                    onClick={() => handlePublish('schedule')} 
+                    disabled={!scheduledAt || !canPublish}
+                    title={!canPublish ? 'Assign Hero, Industry, and at least one Topic before scheduling/publishing' : undefined}
+                    style={{ 
+                      width: '100%',
+                      padding: '10px 16px', 
+                      borderRadius: 8, 
+                      background: (scheduledAt && canPublish) ? 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' : '#e5e7eb', 
+                      color: (scheduledAt && canPublish) ? 'white' : '#9ca3af', 
+                      border: 'none', 
+                      fontSize: 13, 
+                      fontWeight: 700, 
+                      cursor: (scheduledAt && canPublish) ? 'pointer' : 'not-allowed',
+                      transition: 'all 0.2s',
+                      boxShadow: (scheduledAt && canPublish) ? '0 2px 4px rgba(245, 158, 11, 0.3)' : 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8
+                    }}
+                    onMouseOver={e => {
+                      if (scheduledAt && canPublish) {
+                        e.currentTarget.style.transform = 'translateY(-1px)'
+                        e.currentTarget.style.boxShadow = '0 4px 8px rgba(245, 158, 11, 0.4)'
+                      }
+                    }}
+                    onMouseOut={e => {
+                      if (scheduledAt && canPublish) {
+                        e.currentTarget.style.transform = 'translateY(0)'
+                        e.currentTarget.style.boxShadow = '0 2px 4px rgba(245, 158, 11, 0.3)'
+                      }
+                    }}
+                  >
+                    <span>📆</span>
+                    {(data?.draft?.ScheduledAt || data?.draft?.scheduledAt) ? 'Re-schedule' : 'Schedule Article'}
+                  </button>
                 </div>
 
                 {/* Publish Now */}
@@ -916,12 +1486,39 @@ export default function PublishArticle() {
                   onClick={() => handlePublish('now')} 
                   disabled={!canPublish}
                   title={!canPublish ? 'Assign Hero, Industry, and at least one Topic before publishing' : undefined}
-                  style={{ width: '100%', background: canPublish ? 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)' : '#dfe8df', color: canPublish ? 'white' : '#888', border: 'none', padding: '10px 10px', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: canPublish ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, boxShadow: canPublish ? '0 2px 4px rgba(22, 163, 74, 0.3)' : 'none' }}
+                  style={{ 
+                    width: '100%', 
+                    background: canPublish ? 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)' : '#e5e7eb', 
+                    color: canPublish ? 'white' : '#9ca3af', 
+                    border: 'none', 
+                    padding: '14px 20px', 
+                    borderRadius: 10, 
+                    fontSize: 14, 
+                    fontWeight: 700, 
+                    cursor: canPublish ? 'pointer' : 'not-allowed', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: 10, 
+                    boxShadow: canPublish ? '0 4px 12px rgba(186, 0, 6, 0.3)' : 'none',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseOver={e => {
+                    if (canPublish) {
+                      e.currentTarget.style.transform = 'translateY(-2px)'
+                      e.currentTarget.style.boxShadow = '0 6px 16px rgba(186, 0, 6, 0.4)'
+                    }
+                  }}
+                  onMouseOut={e => {
+                    if (canPublish) {
+                      e.currentTarget.style.transform = 'translateY(0)'
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(186, 0, 6, 0.3)'
+                    }
+                  }}
                 >
-                  <span>🚀</span> Publish Now
+                  <span style={{ fontSize: 18 }}>🚀</span> 
+                  Publish Now
                 </button>
-
-                {/* Cancel */}
               </div>
             </div>
           </div>
