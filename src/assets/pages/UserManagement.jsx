@@ -247,7 +247,7 @@ export default function UserManagement() {
               onClick={() => navigate('/admin/member-analytics')}
               style={{ 
                 padding: '8px 16px', 
-                background: '#2196F3', 
+                background: '#c92b2b', 
                 color: 'white',
                 border: 'none', 
                 borderRadius: 6, 

@@ -34,6 +34,7 @@ import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
 import PreferencesSetup from './assets/pages/PreferencesSetup'
 import MemberProfile from './assets/pages/MemberProfile'
+import SavedArticles from './assets/pages/SavedArticles'
 import BroadcastManagement from './assets/pages/BroadcastManagement';
 import DraftsList from './assets/pages/DraftsList';
 import MessageSent from './assets/pages/MessageSent';
@@ -162,7 +163,6 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
   const navItemsByRole = {
     member: [
       { path: '/member/articles', label: 'Articles', icon: icons.news },
-      { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
       { path: '/member/profile', label: 'My Profile', icon: icons.profile }
     ],
     consultant: [
@@ -439,6 +439,7 @@ function AppContent() {
           <Route path={'/notification-frequency'} element={<NotificationFrequency />} />
           <Route path={'/member/profile'} element={<MemberProfile />} />
           <Route path={'/landing'} element={<LoginLanding />} />
+          <Route path={'/member/saved-articles'} element={<SavedArticles />} />
           <Route path={'/member/articles'} element={<MemberArticles />} />
           <Route path={'/member/articles/:id'} element={<MemberArticleDetail />} />
           <Route path={'/admin/users'} element={<UserManagement />} />
