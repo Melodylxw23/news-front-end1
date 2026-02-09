@@ -27,18 +27,15 @@ import IndustryManagement from './assets/pages/IndustryManagement'
 import InterestManagement from './assets/pages/InterestManagement'
 import CategoryManagement from './assets/pages/CategoryManagement'
 import UserManagement from './assets/pages/UserManagement'
-import MemberAnalytics from './assets/pages/MemberAnalytics'
 import SetInitialPassword from './assets/pages/SetInitialPassword'
 import SelectTopicsOfInterest from './assets/pages/SelectTopicsOfInterest'
 import NotificationPreferences from './assets/pages/NotificationPreferences'
 import NotificationFrequency from './assets/pages/NotificationFrequency'
-import PreferencesSetup from './assets/pages/PreferencesSetup'
 import MemberProfile from './assets/pages/MemberProfile'
-import SavedArticles from './assets/pages/SavedArticles'
 import BroadcastManagement from './assets/pages/BroadcastManagement';
+import BroadcastAnalytics from './assets/pages/BroadcastAnalytics';
 import DraftsList from './assets/pages/DraftsList';
 import MessageSent from './assets/pages/MessageSent';
-import { p, path } from 'framer-motion/client';
 import ArticlesList from './assets/pages/ArticleList';
 import ArticleReview from './assets/pages/ArticleReview';
 import PublishQueue from './assets/pages/PublishQueue';
@@ -46,10 +43,20 @@ import PublishArticle from './assets/pages/PublishArticle';
 import PublicArticles from './assets/pages/PublicArticles';
 import TopicsOfInterest from './assets/pages/TopicsOfInterest';
 import ForgotPassword from './assets/pages/ForgotPassword';
-import MemberArticles from './assets/pages/MemberArticles';
-import MemberArticleDetail from './assets/pages/MemberArticleDetail';
 import ConsultantAdvice from './assets/pages/ConsultantAdvice';
-import BroadcastAnalytics from './assets/pages/BroadcastAnalytics';
+
+function normalizeRole(rawRole) {
+  const role = String(rawRole || '').toLowerCase().trim();
+  if (!role) return null;
+  if (role === 'client' || role === 'customer') return 'member';
+  if (role === 'members') return 'member';
+  if (role === 'consultants') return 'consultant';
+  if (role === 'admins') return 'admin';
+  if (role.includes('admin')) return 'admin';
+  if (role.includes('consultant')) return 'consultant';
+  if (role.includes('member')) return 'member';
+  return role;
+}
 
 // Sidebar component (trimmed to use only existing pages)
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
@@ -147,6 +154,13 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
         <path d="M12 19V5M5 12l7-7 7 7"/>
       </svg>
     ),
+    analytics: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 20V10"/>
+        <path d="M12 20V4"/>
+        <path d="M6 20v-6"/>
+      </svg>
+    ),
     logout: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -163,7 +177,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
 
   const navItemsByRole = {
     member: [
-      { path: '/member/articles', label: 'Articles', icon: icons.news },
+      { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
       { path: '/member/profile', label: 'My Profile', icon: icons.profile }
     ],
     consultant: [
@@ -171,16 +185,17 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
       { path: '/consultant/fetch', label: 'News Fetch Dashboard', icon: icons.news },
       { path: '/consultant/articles', label: 'Articles List', icon: icons.articles },
       { path: '/consultant/publish-queue', label: 'Publish Queue', icon: icons.publish },
-      {path: '/consultant-advice', label: 'Consultant Advice', icon: icons.users}
+      { path: '/consultant/advice', label: 'Consultant Advice', icon: icons.broadcast }
+      
     ],
     admin: [
       { path: '/admin/users', label: 'User Management', icon: icons.users },
       { path: '/admin/categories', label: 'Category Management', icon: icons.category },
       { path: '/admin/sources', label: 'Source Management', icon: icons.sources },
-      { path: '/admin/broadcast', label: 'Broadcast Management', icon: icons.broadcast, hasArrow: true },
-      {path: '/broadcast-analytics', label: 'Broadcast Analytics', icon: icons.dashboard},
+      { path: '/admin/broadcast', label: 'Broadcast Management', icon: icons.broadcast },
+      { path: '/admin/broadcast-analytics', label: 'Broadcast Analytics', icon: icons.analytics },
       { path: '/notification-preferences', label: 'Notifications', icon: icons.notifications },
-
+      { path: '/landing', label: 'Settings', icon: icons.settings }
     ]
   };
 
@@ -368,7 +383,7 @@ function Separator({ borderColor = 'gray.200', mb, animation, ...rest }) {
 function AppContent() {
   const location = useLocation();
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
-  const [userRole, setUserRole] = useState(localStorage.getItem('role') || 'client');
+  const [userRole, setUserRole] = useState(() => normalizeRole(localStorage.getItem('role')) || 'member');
 
   const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password', '/set-initial-password', '/public-articles', '/topics-of-interest'];
   const isAuthPage = authPaths.includes(location.pathname) || location.pathname.startsWith('/reset-password');
@@ -380,28 +395,23 @@ function AppContent() {
     const role = localStorage.getItem('role');
     setIsLoggedIn(!!token);
     if (role) {
-      setUserRole(role);
+      setUserRole(normalizeRole(role) || 'member');
     }
   }, [location.pathname]);
 
   useEffect(() => {
-    const handleStorage = () => { setIsLoggedIn(!!localStorage.getItem('token')); setUserRole(localStorage.getItem('role') || 'client'); };
+    const handleStorage = () => {
+      setIsLoggedIn(!!localStorage.getItem('token'));
+      setUserRole(normalizeRole(localStorage.getItem('role')) || 'member');
+    };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
-  const handleLoginSuccess = (role) => { setIsLoggedIn(true); setUserRole(role); };
+  const handleLoginSuccess = (role) => { setIsLoggedIn(true); setUserRole(normalizeRole(role) || 'member'); };
   // navigate to landing after login
   const navigate = useNavigate();
-  const handleLoginSuccessAndNavigate = (role) => {
-    setIsLoggedIn(true);
-    setUserRole(role);
-    if (String(role).toLowerCase() === 'member') {
-      navigate('/member/articles');
-    } else {
-      navigate('/landing');
-    }
-  };
+  const handleLoginSuccessAndNavigate = (role) => { setIsLoggedIn(true); setUserRole(normalizeRole(role) || 'member'); navigate('/landing'); };
   const handleLogout = () => { localStorage.removeItem('token'); setIsLoggedIn(false); navigate('/MemberLogin'); };
 
   const isMobile = useBreakpointValue({ base: true, md: false });
@@ -436,25 +446,24 @@ function AppContent() {
           <Route path={'/StaffLogin'} element={<StaffLogin onLoginSuccess={handleLoginSuccessAndNavigate} />} />
           <Route path={'/StaffRegister'} element={<StaffRegister />} />
           <Route path={'/set-initial-password'} element={<SetInitialPassword />} />
-          <Route path={'/setup-preferences'} element={<PreferencesSetup />} />
           <Route path={'/select-topics'} element={<SelectTopicsOfInterest />} />
           <Route path={'/notification-preferences'} element={<NotificationPreferences />} />
           <Route path={'/notification-frequency'} element={<NotificationFrequency />} />
           <Route path={'/member/profile'} element={<MemberProfile />} />
           <Route path={'/landing'} element={<LoginLanding />} />
-          <Route path={'/member/saved-articles'} element={<SavedArticles />} />
-          <Route path={'/member/articles'} element={<MemberArticles />} />
-          <Route path={'/member/articles/:id'} element={<MemberArticleDetail />} />
           <Route path={'/admin/users'} element={<UserManagement />} />
-          <Route path={'/admin/member-analytics'} element={<MemberAnalytics />} />
           <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
+
+          {/* Consultant area */}
+          <Route path={'/consultant'} element={<Navigate to="/consultant/advice" replace />} />
           <Route path={'/consultant/fetch'} element={<NewsFetchDashboard />} />
           <Route path={'/consultant/articles'} element={<ArticlesList />} />
           <Route path={'/consultant/articles/:id'} element={<ArticleReview />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
           <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />
+          <Route path={'/admin/broadcast-analytics'} element={<BroadcastAnalytics />} />
           <Route path={'/drafts'} element={<DraftsList />} />
           <Route path={'/message-sent'} element={<MessageSent />} />
           <Route path={'/consultant/publish-queue'} element={<PublishQueue />} />
@@ -462,8 +471,7 @@ function AppContent() {
           <Route path={'/public-articles'} element={<PublicArticles />} />
           <Route path={'/topics-of-interest'} element={<TopicsOfInterest />} />
           <Route path={'/forgot-password'} element={<ForgotPassword />} />
-          <Route path={'/consultant-advice'} element={<ConsultantAdvice />} />
-          <Route path={'/broadcast-analytics'} element={<BroadcastAnalytics />} />
+          <Route path={'/consultant/advice'} element={<ConsultantAdvice />} />
         </Routes>
       </Box>
     </Flex>

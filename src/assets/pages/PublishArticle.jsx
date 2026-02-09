@@ -1672,7 +1672,7 @@ export default function PublishArticle() {
                         onClick={() => {
                           if (!loading) {
                             console.log('Regenerating hero image for article', id)
-                            requestGenerateHeroImage()
+                            generateHeroImage()
                           }
                         }} 
                         disabled={loading}
@@ -2038,7 +2038,8 @@ export default function PublishArticle() {
               </div>
 
               <div style={{ marginTop: 'auto', paddingTop: 20, borderTop: '2px solid #f0f0f0' }}>
-                <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex' }}>
+                <div style={styles.heading}>
+                  <span>🚀</span>
                   Publishing Actions
                 </div>
                 
@@ -2075,7 +2076,7 @@ export default function PublishArticle() {
                   }}
                 >
                   <span style={{ fontSize: 16 }}>💾</span> 
-                  Save
+                  Save as Draft
                 </button>
 
                 {/* Schedule */}
@@ -2141,7 +2142,7 @@ export default function PublishArticle() {
                     }}
                   >
                     <span>📆</span>
-                    {(sourceTab === 'unpublished' || sourceTab === 'Unpublished') || (data?.draft?.ScheduledAt || data?.draft?.scheduledAt) ? 'Re-schedule' : 'Schedule Article'}
+                    {(data?.draft?.ScheduledAt || data?.draft?.scheduledAt) ? 'Re-schedule' : 'Schedule Article'}
                   </button>
                 </div>
 

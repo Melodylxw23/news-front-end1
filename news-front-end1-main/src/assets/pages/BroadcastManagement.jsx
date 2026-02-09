@@ -486,40 +486,8 @@ const BroadcastManagement = () => {
     };
 
     const handlePreviewRecipients = async () => {
-        // First, ensure we have a draft ID (save/update if needed)
+        // First, ensure we have a draft ID (save if needed)
         let draftId = formData.id || generatedContentId;
-        
-        // If using AI-generated content, update it with current form data (including selectedArticleIds)
-        if (generatedContentId && !formData.id) {
-            try {
-                setIsSavingDraft(true);
-                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
-                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
-                const channelEnumValue = toChannelEnumValue(selectedChannels);
-                const updateData = {
-                    title: formData.title,
-                    subject: formData.subject,
-                    body: formData.body,
-                    channel: channelEnumValue,
-                    targetAudience: toAudienceEnumValue(selectedAudience),
-                    scheduledSendAt: formData.scheduledSendAt || null,
-                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
-                };
-                
-                await apiFetch(`/api/Broadcast/${generatedContentId}`, {
-                    method: 'PUT',
-                    body: JSON.stringify(updateData)
-                });
-                
-                console.log('[handlePreviewRecipients] Updated AI-generated draft with selected articles');
-            } catch (error) {
-                console.error('[handlePreviewRecipients] update AI draft error:', error);
-                alert('Failed to update draft: ' + error.message);
-                return;
-            } finally {
-                setIsSavingDraft(false);
-            }
-        }
         
         if (!draftId) {
             if (!formData.title?.trim() || !formData.subject?.trim() || !formData.body?.trim()) {
@@ -607,40 +575,8 @@ const BroadcastManagement = () => {
 
         if (!window.confirm(`Send "${formData.subject}" to ${audienceDesc} via ${channelDesc} now?`)) return;
         
-        // Ensure we have a draft ID (save/update if needed)
+        // Ensure we have a draft ID (save if needed)
         let draftId = formData.id || generatedContentId;
-        
-        // If using AI-generated content, update it with current form data (including selectedArticleIds)
-        if (generatedContentId && !formData.id) {
-            try {
-                setIsSavingDraft(true);
-                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
-                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
-                const channelEnumValue = toChannelEnumValue(selectedChannels);
-                const updateData = {
-                    title: formData.title,
-                    subject: formData.subject,
-                    body: formData.body,
-                    channel: channelEnumValue,
-                    targetAudience: toAudienceEnumValue(selectedAudience),
-                    scheduledSendAt: formData.scheduledSendAt || null,
-                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
-                };
-                
-                await apiFetch(`/api/Broadcast/${generatedContentId}`, {
-                    method: 'PUT',
-                    body: JSON.stringify(updateData)
-                });
-                
-                console.log('[handleSendBroadcast] Updated AI-generated draft with selected articles');
-            } catch (error) {
-                console.error('[handleSendBroadcast] update AI draft error:', error);
-                alert('Failed to update draft: ' + error.message);
-                return;
-            } finally {
-                setIsSavingDraft(false);
-            }
-        }
         
         if (!draftId) {
             try {

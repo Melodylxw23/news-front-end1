@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { getRoleFromToken } from '../../utils/auth'
 
 // support either VITE_API_BASE or VITE_API_BASE_URL
@@ -25,7 +24,6 @@ const apiFetch = async (path, opts = {}) => {
 }
 
 export default function UserManagement() {
-  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('members') // 'members' or 'consultants'
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(false)
@@ -44,24 +42,16 @@ export default function UserManagement() {
       const res = await apiFetch(endpoint)
       console.log('[load] raw response:', res)
       const list = res?.data || res || []
-      console.log('[load] full list:', list)
+      console.log('[load] list:', list)
       
       // Map fields with case-insensitive fallbacks
       const mapped = Array.isArray(list) ? list.map(u => {
-        console.log('[load] processing user:', u)
-        console.log('[load] user.interests:', u.interests)
-        console.log('[load] user.Interests:', u.Interests)
-        console.log('[load] user.interestTags:', u.interestTags)
-        console.log('[load] user.InterestTags:', u.InterestTags)
-        
         const industryStr = Array.isArray(u.industryTags) || Array.isArray(u.IndustryTags)
-          ? (u.industryTags || u.IndustryTags).map(t => t.nameEN || t.NameEN || t.name || t.Name).join(', ')
+          ? (u.industryTags || u.IndustryTags).map(t => t.name || t.Name).join(', ')
           : u.industry ?? u.Industry ?? '-'
         
         const topicsStr = Array.isArray(u.interestTags) || Array.isArray(u.InterestTags)
-          ? (u.interestTags || u.InterestTags).map(t => t.nameEN || t.NameEN || t.name || t.Name).join(', ')
-          : Array.isArray(u.interests) || Array.isArray(u.Interests)
-          ? (u.interests || u.Interests).map(t => t.nameEN || t.NameEN || t.name || t.Name).join(', ')
+          ? (u.interestTags || u.InterestTags).map(t => t.name || t.Name).join(', ')
           : u.topics ?? u.Topics ?? '-'
 
         const item = {
@@ -74,7 +64,7 @@ export default function UserManagement() {
           isActive: u.isActive ?? u.IsActive ?? true,
           avatar: u.avatar ?? u.Avatar ?? null
         }
-        console.log('[load] mapped user:', item)
+        console.log('[load] mapped user:', u, '→', item)
         return item
       }) : []
 
@@ -242,22 +232,6 @@ export default function UserManagement() {
           style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 6, width: 300 }}
         />
         <div style={{ display: 'flex', gap: 12 }}>
-          {activeTab === 'members' && (
-            <button 
-              onClick={() => navigate('/admin/member-analytics')}
-              style={{ 
-                padding: '8px 16px', 
-                background: '#c92b2b', 
-                color: 'white',
-                border: 'none', 
-                borderRadius: 6, 
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
-            >
-              📊 Member Analytics
-            </button>
-          )}
           {activeTab === 'consultants' && (
             <button 
               onClick={openCreateModal}
