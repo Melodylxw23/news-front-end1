@@ -64,3 +64,13 @@ button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
+/* Hide scrollbars while keeping scrolling functionality */
+textarea {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Edge/IE */
+}
+
+/* Chrome, Safari, and Opera */
+textarea::-webkit-scrollbar {
+  display: none;
+}
