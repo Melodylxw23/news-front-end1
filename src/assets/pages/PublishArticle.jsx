@@ -1374,7 +1374,7 @@ export default function PublishArticle() {
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <h1 style={{ fontSize: 32, margin: 0, fontWeight: 800, color: '#887B87', display: 'flex', alignItems: 'center', gap: 12 }}>
                 <span style={{ fontSize: 28 }}>📝</span>
-                Publish Article
+                {(sourceTab === 'unpublished' || sourceTab === 'Unpublished') ? 'Re-publish Article' : 'Publish Article'}
               </h1>
               <span style={{ 
                 padding: '4px 12px', 

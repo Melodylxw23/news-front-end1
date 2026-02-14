@@ -983,6 +983,10 @@ export default function PublishQueue() {
     setTimeout(() => setToast(null), 5000)
   }
 
+  const showQuickFeatureNotReady = (label) => {
+    alert(`${label} is a feature that hasn't been worked on yet.`)
+  }
+
   // direct publish helper removed — use `quickPublish` which saves drafts, applies AI and generates images before publishing
 
   const openQuickScheduleModal = () => {
@@ -1322,7 +1326,7 @@ export default function PublishQueue() {
         setSelectedIds(prev => prev.filter(selId => !idsToUnpublish.includes(Number(selId))))
       }
 
-      showToast('Unpublish request sent', 'success')
+      showToast('Unpublished article', 'success')
       try { window.dispatchEvent(new Event('articles:changed')) } catch (e) {}
       loadQueue()
     } catch (err) {
@@ -1412,8 +1416,8 @@ export default function PublishQueue() {
                       </button>
                       {activeTab !== 'unpublished' && (
                         <>
-                          <button onClick={openQuickScheduleModal} disabled={quickActionsDisabled} title={quickActionsTooltip} style={{ padding: '3px 6px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#e07a16' : '#f2f2f2', color: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#fff' : '#999', border: 'none', cursor: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 4 }}><span>📅</span> {activeTab === 'scheduled' ? 'Quick Re-schedule' : 'Quick Schedule'}</button>
-                          <button onClick={quickPublish} disabled={quickActionsDisabled} title={quickActionsTooltip} style={{ padding: '3px 6px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#1e7a3a' : '#f2f2f2', color: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#fff' : '#999', border: 'none', cursor: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? 'pointer' : 'default' }}><span>📤</span>Quick Publish</button>
+                          <button onClick={() => showQuickFeatureNotReady(activeTab === 'scheduled' ? 'Quick Re-schedule' : 'Quick Schedule')} disabled={quickActionsDisabled} title={quickActionsTooltip} style={{ padding: '3px 6px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#e07a16' : '#f2f2f2', color: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#fff' : '#999', border: 'none', cursor: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 4 }}><span>📅</span> {activeTab === 'scheduled' ? 'Quick Re-schedule' : 'Quick Schedule'}</button>
+                          <button onClick={() => showQuickFeatureNotReady('Quick Publish')} disabled={quickActionsDisabled} title={quickActionsTooltip} style={{ padding: '3px 6px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#1e7a3a' : '#f2f2f2', color: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#fff' : '#999', border: 'none', cursor: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? 'pointer' : 'default' }}><span>📤</span>Quick Publish</button>
                         </>
                       )}
                     </>
