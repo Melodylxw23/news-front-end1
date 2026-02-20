@@ -60,8 +60,13 @@ export async function stats() {
 export async function deleteArticle(id) {
   if (!id) throw new Error('id required')
   const res = await fetch(join(`/api/articles/${id}`), { method: 'DELETE', headers: buildHeaders() })
-  if (!res.ok) throw new Error(await res.text())
-  return res.status === 204 ? null : res.json()
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '')
+    const msg = txt || res.statusText || `HTTP ${res.status}`
+    throw new Error(msg)
+  }
+  const text = await res.text().catch(() => '')
+  try { return text ? JSON.parse(text) : null } catch { return text }
 }
 
 export async function publishArticles(ids = []) {

@@ -22,7 +22,7 @@ import Register from './assets/pages/Register';
 import StaffRegister from './assets/pages/StaffRegister';
 import LoginLanding from './assets/pages/LoginLanding';
 import SourceManagement from './assets/pages/SourceManagement';
-import NewsFetchDashboard from './assets/pages/NewsFetchDashboard';
+import FetchArticles from './assets/pages/FetchArticles';
 import IndustryManagement from './assets/pages/IndustryManagement'
 import InterestManagement from './assets/pages/InterestManagement'
 import CategoryManagement from './assets/pages/CategoryManagement'
@@ -39,7 +39,6 @@ import BroadcastManagement from './assets/pages/BroadcastManagement';
 import DraftsList from './assets/pages/DraftsList';
 import MessageSent from './assets/pages/MessageSent';
 import { p, path } from 'framer-motion/client';
-import ArticlesList from './assets/pages/ArticleList';
 import ArticleReview from './assets/pages/ArticleReview';
 import PublishQueue from './assets/pages/PublishQueue';
 import PublishArticle from './assets/pages/PublishArticle';
@@ -168,8 +167,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     ],
     consultant: [
       { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
-      { path: '/consultant/fetch', label: 'News Fetch Dashboard', icon: icons.news },
-      { path: '/consultant/articles', label: 'Articles List', icon: icons.articles },
+      { path: '/consultant/fetch', label: 'Fetch Articles', icon: icons.articles },
       { path: '/consultant/publish-queue', label: 'Publish Queue', icon: icons.publish },
       {path: '/consultant-advice', label: 'Consultant Advice', icon: icons.users}
     ],
@@ -449,9 +447,8 @@ function AppContent() {
           <Route path={'/admin/member-analytics'} element={<MemberAnalytics />} />
           <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
-          <Route path={'/consultant/fetch'} element={<NewsFetchDashboard />} />
-          <Route path={'/consultant/articles'} element={<ArticlesList />} />
-          <Route path={'/consultant/articles/:id'} element={<ArticleReview />} />
+          <Route path={'/consultant/fetch'} element={<FetchArticles />} />
+          <Route path={'/consultant/fetch/:id'} element={<ArticleReview />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
           <Route path={'/admin/broadcast'} element={<BroadcastManagement />} />

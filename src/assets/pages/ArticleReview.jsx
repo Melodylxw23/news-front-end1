@@ -697,7 +697,7 @@ export default function ArticleReview() {
             Previous
           </button>
 
-          <button onClick={() => navigate('/consultant/articles')} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #e6e6e6', background: 'white' }}>Back</button>
+          <button onClick={() => navigate('/consultant/fetch')} style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #e6e6e6', background: 'white' }}>Back</button>
 
           <button
             onClick={() => {
