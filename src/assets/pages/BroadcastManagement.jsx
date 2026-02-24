@@ -872,7 +872,11 @@ const BroadcastManagement = () => {
                     selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
                 };
                 
+<<<<<<< HEAD
                 await apiFetch(`/api/broadcast/${generatedContentId}`, {
+=======
+                await apiFetch(`/api/Broadcast/${generatedContentId}`, {
+>>>>>>> f94cd8e18f1e92bef500a3c409e8cca413b37ca0
                     method: 'PUT',
                     body: JSON.stringify(updateData)
                 });
@@ -991,16 +995,25 @@ const BroadcastManagement = () => {
         // Ensure we have a draft ID (save/update if needed)
         let draftId = formData.id || generatedContentId;
         
+<<<<<<< HEAD
         // If using AI-generated content, update it with current form data
         if (generatedContentId && !formData.id) {
             try {
                 setIsSavingDraft(true);
+=======
+        // If using AI-generated content, update it with current form data (including selectedArticleIds)
+        if (generatedContentId && !formData.id) {
+            try {
+                setIsSavingDraft(true);
+                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
+>>>>>>> f94cd8e18f1e92bef500a3c409e8cca413b37ca0
                 const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
                 const channelEnumValue = toChannelEnumValue(selectedChannels);
                 const updateData = {
                     title: formData.title,
                     subject: formData.subject,
                     body: formData.body,
+<<<<<<< HEAD
                     language: formData.language ?? 0,
                     titleZH: formData.titleZH || null,
                     subjectZH: formData.subjectZH || null,
@@ -1014,16 +1027,28 @@ const BroadcastManagement = () => {
                     SelectedIndustryTagIds: formData.selectedIndustryTagIds || [],
                     // Keep for backward compatibility
                     targetAudience: 0,
+=======
+                    channel: channelEnumValue,
+                    targetAudience: toAudienceEnumValue(selectedAudience),
+>>>>>>> f94cd8e18f1e92bef500a3c409e8cca413b37ca0
                     scheduledSendAt: formData.scheduledSendAt || null,
                     selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
                 };
                 
+<<<<<<< HEAD
                 await apiFetch(`/api/broadcast/${generatedContentId}`, {
+=======
+                await apiFetch(`/api/Broadcast/${generatedContentId}`, {
+>>>>>>> f94cd8e18f1e92bef500a3c409e8cca413b37ca0
                     method: 'PUT',
                     body: JSON.stringify(updateData)
                 });
                 
+<<<<<<< HEAD
                 console.log('[handleSendBroadcast] Updated AI-generated draft with tag-based targeting');
+=======
+                console.log('[handleSendBroadcast] Updated AI-generated draft with selected articles');
+>>>>>>> f94cd8e18f1e92bef500a3c409e8cca413b37ca0
             } catch (error) {
                 console.error('[handleSendBroadcast] update AI draft error:', error);
                 alert('Failed to update draft: ' + error.message);

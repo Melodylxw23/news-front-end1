@@ -52,9 +52,9 @@ function MemberLogin({ onLoginSuccess }) {
           if (nameFromToken) localStorage.setItem('name', nameFromToken)
           if (onLoginSuccess) onLoginSuccess(roleFromToken)
           
-          // Navigate to member profile for members
-          if (roleFromToken.toLowerCase() === 'member') {
-            navigate('/member/profile')
+            // Navigate to member articles for members
+            if (roleFromToken.toLowerCase() === 'member') {
+              navigate('/member/articles')
             return
           }
         } else {
@@ -69,15 +69,15 @@ function MemberLogin({ onLoginSuccess }) {
             else if (rolesLower.includes('consultant')) determined = 'consultant'
             else if (rolesLower.includes('member')) determined = 'member'
             else if (roles.length > 0) determined = String(roles[0]).toLowerCase()
-            if (determined) {
-              localStorage.setItem('role', determined)
-              if (me?.Name) localStorage.setItem('name', me.Name)
+                // Navigate to member articles for members
+                if (determined === 'member') {
+                  navigate('/member/articles')
               if (onLoginSuccess) onLoginSuccess(determined)
               
               // Navigate to member profile for members
               if (determined === 'member') {
                 navigate('/member/profile')
-                return
+                navigate('/member/articles')
               }
             } else {
               localStorage.setItem('role', 'member')

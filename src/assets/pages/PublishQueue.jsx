@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { getPublishDraft, getArticle, batchPublish, deleteArticle, getIndustryTags, getInterestTags, batchSaveDrafts, generateHeroImage, batchUnpublish } from '../../api/articles'
+import { getPublishDraft, getArticle, batchPublish, deleteArticle, getIndustryTags, getInterestTags, batchSaveDrafts, generateHeroImage, batchUnpublish, quickPublishArticles, quickScheduleArticles as quickScheduleBatch, generatePublishTagAnalytics } from '../../api/articles'
 import { suggestPublish } from '../../api/articles'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 
 const palette = {
   bg: '#fbf8f6',
@@ -24,11 +24,40 @@ const styles = {
   actionsCell: { padding: 8 }
 }
 
-// Inject keyframes for spinner animation
+// Inject keyframes for spinner and highlight animations
 if (typeof document !== 'undefined' && !document.getElementById('publish-queue-spin-style')) {
   const style = document.createElement('style')
   style.id = 'publish-queue-spin-style'
-  style.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }'
+  style.textContent = `
+    @keyframes spin { 
+      from { transform: rotate(0deg); } 
+      to { transform: rotate(360deg); } 
+    }
+    @keyframes highlightPulse {
+      0% { 
+        background: linear-gradient(135deg, #FFF5F5 0%, #FFE8E8 100%);
+        box-shadow: 0 0 0 0 rgba(186, 0, 6, 0.4), inset 0 0 20px rgba(186, 0, 6, 0.1);
+      }
+      50% {
+        background: linear-gradient(135deg, #FFEBEB 0%, #FFD6D6 100%);
+        box-shadow: 0 0 20px 5px rgba(186, 0, 6, 0.3), inset 0 0 30px rgba(186, 0, 6, 0.15);
+      }
+      100% { 
+        background: linear-gradient(135deg, #FFF5F5 0%, #FFE8E8 100%);
+        box-shadow: 0 0 0 0 rgba(186, 0, 6, 0.4), inset 0 0 20px rgba(186, 0, 6, 0.1);
+      }
+    }
+    @keyframes slideUp {
+      from {
+        transform: translateX(-50%) translateY(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(-50%) translateY(0);
+        opacity: 1;
+      }
+    }
+  `
   document.head.appendChild(style)
 }
 
@@ -53,8 +82,17 @@ export default function PublishQueue() {
   const [industryList, setIndustryList] = useState([])
   const [interestList, setInterestList] = useState([])
   const [displayLang, setDisplayLang] = useState('EN') // 'EN' | 'ZH'
+  const [highlightedArticleId, setHighlightedArticleId] = useState(null)
+  const [previewLang, setPreviewLang] = useState('EN') // 'EN' | 'ZH' for article preview modal
+  const [pendingIncompleteWarning, setPendingIncompleteWarning] = useState(null) // { classifications: [], message: '' }
+  const [tagAnalytics, setTagAnalytics] = useState(null)
+  const [tagAnalyticsLoading, setTagAnalyticsLoading] = useState(false)
+  const [showTagAnalytics, setShowTagAnalytics] = useState(true)
+  const [tagAnalyticsExpanded, setTagAnalyticsExpanded] = useState(false)
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const LAST_STATE_KEY = 'publishQueue.lastState'
+  const TAG_ANALYTICS_KEY = 'publishQueue.tagAnalytics'
 
   // normalize draft/article fields to prefer EN variants and handle casing inconsistencies
   const normalizeDraft = (d) => {
@@ -107,24 +145,119 @@ export default function PublishQueue() {
   const [activeTab, setActiveTab] = useState('ready') // ready, drafted, scheduled, published, unpublished
   const location = useLocation()
 
+  // Helper: sanitize and shorten AI-generated analytics text
+  const sanitizeAndShortenAnalytics = (text, maxLength = 800) => {
+    if (!text || typeof text !== 'string') return ''
+    // Remove markdown-like characters (#, *) and normalize common list markers
+    let cleaned = text.replace(/[#*]/g, '')
+    // Replace bullet-like hyphens at line starts and inline ' - ' with sentence separators
+    cleaned = cleaned.replace(/^\s*[-–—]+\s*/gm, '')
+    cleaned = cleaned.replace(/\s+[-–—]\s+/g, '. ')
+    // Convert colon separators into sentence breaks where appropriate (avoid times like 12:30 and URLs)
+    cleaned = cleaned.replace(/:\s*/g, (match, offset, str) => {
+      const prev = str[offset - 1] || ''
+      const next = str[offset + match.length] || ''
+      // If colon is part of a time or numeric range (digit before and digit after), keep it
+      if (/\d/.test(prev) && /\d/.test(next)) return ': '
+      // If URL-like text near the colon, keep it
+      const window = str.slice(Math.max(0, offset - 10), offset + 10)
+      if (/https?:\/\//i.test(window) || /www\./i.test(window)) return ': '
+      return '. '
+    })
+    // Normalize newlines and whitespace
+    cleaned = cleaned.replace(/\r\n|\r/g, '\n')
+    cleaned = cleaned.replace(/\n{2,}/g, '\n').replace(/\s{2,}/g, ' ').trim()
+
+    // Split into sentences and ensure each ends with proper punctuation and capitalization
+    let sentences = cleaned.split(/(?<=[.!?])\s+/g).map(s => s.trim()).filter(Boolean)
+    sentences = sentences.map(s => {
+      if (!/[.!?]$/.test(s)) s = s + '.'
+      // Capitalize first letter if it's a lowercase ASCII letter
+      if (/^[a-z]/.test(s)) s = s.charAt(0).toUpperCase() + s.slice(1)
+      return s
+    })
+    const normalized = sentences.join(' ')
+    if (normalized.length <= maxLength) return normalized
+
+    // Build truncated version by accumulating full sentences up to maxLength
+    let acc = ''
+    for (const s of sentences) {
+      if ((acc + ' ' + s).trim().length > maxLength) break
+      acc = (acc + ' ' + s).trim()
+    }
+    if (acc) return acc + '…'
+    // Fallback: truncate hard and try to end at a sentence-like boundary
+    const snippet = normalized.slice(0, maxLength)
+    const lastSentenceEnd = Math.max(snippet.lastIndexOf('.'), snippet.lastIndexOf('!'), snippet.lastIndexOf('?'))
+    if (lastSentenceEnd > Math.floor(maxLength * 0.4)) {
+      return snippet.slice(0, lastSentenceEnd + 1).trim() + '…'
+    }
+    return snippet.trim() + '…'
+  }
+
+  // Render cleaned analytics as React nodes, bolding numeric tokens
+  const renderAnalyticsContent = (rawText, maxLength = 800) => {
+    const cleaned = sanitizeAndShortenAnalytics(rawText, maxLength) || ''
+    // Split by numeric groups (commas allowed) so we can bold them
+    const parts = cleaned.split(/(\d{1,3}(?:,\d{3})*|\d+)/g).filter(p => p !== undefined)
+    return parts.map((part, idx) => {
+      if (/^\d{1,3}(?:,\d{3})*$/.test(part) || /^\d+$/.test(part)) {
+        return <strong key={idx} style={{ fontWeight: 700 }}>{part}</strong>
+      }
+      return part
+    })
+  }
+
   useEffect(() => {
     // Restore last viewed tab/page from localStorage when possible so users
     // return to the exact place they left off. If no stored state exists,
     // fall back to `?tab=` URL param and mark skipAutoSwitch accordingly.
     try {
-      const stored = JSON.parse(localStorage.getItem(LAST_STATE_KEY) || 'null')
-      if (stored && stored.tab && ['ready', 'drafted', 'scheduled', 'published', 'unpublished'].includes(stored.tab)) {
-        setActiveTab(stored.tab)
-        setPage(stored.page || 1)
-        // Prevent the auto-switch effect from immediately overriding the restored state
-        skipAutoSwitchRef.current = true
+      // Check for highlight parameter first (takes priority)
+      const highlightId = searchParams.get('highlight')
+      const tabParam = searchParams.get('tab')
+      
+      if (highlightId) {
+        // If highlighting an article, use tab from URL and set highlight
+        setHighlightedArticleId(Number(highlightId))
+        if (tabParam && ['ready', 'drafted', 'scheduled', 'published', 'unpublished'].includes(tabParam)) {
+          setActiveTab(tabParam)
+          skipAutoSwitchRef.current = true
+        }
+        // Clear highlight after 3 seconds
+        setTimeout(() => {
+          setHighlightedArticleId(null)
+          // Remove highlight param from URL
+          const newParams = new URLSearchParams(location.search)
+          newParams.delete('highlight')
+          const newSearch = newParams.toString()
+          navigate(location.pathname + (newSearch ? '?' + newSearch : ''), { replace: true })
+        }, 3000)
       } else {
-        const params = new URLSearchParams(location.search)
-        const t = params.get('tab')
-        if (t && ['ready', 'drafted', 'scheduled', 'published', 'unpublished'].includes(t)) { setActiveTab(t); skipAutoSwitchRef.current = true }
+        const stored = JSON.parse(localStorage.getItem(LAST_STATE_KEY) || 'null')
+        if (stored && stored.tab && ['ready', 'drafted', 'scheduled', 'published', 'unpublished'].includes(stored.tab)) {
+          setActiveTab(stored.tab)
+          setPage(stored.page || 1)
+          // Prevent the auto-switch effect from immediately overriding the restored state
+          skipAutoSwitchRef.current = true
+        } else if (tabParam && ['ready', 'drafted', 'scheduled', 'published', 'unpublished'].includes(tabParam)) {
+          setActiveTab(tabParam)
+          skipAutoSwitchRef.current = true
+        }
       }
     } catch (e) {}
     loadQueue()
+  }, [])
+
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(TAG_ANALYTICS_KEY)
+      if (!cached) return
+      const parsed = JSON.parse(cached)
+      if (parsed && typeof parsed === 'object') setTagAnalytics(parsed)
+    } catch (e) {
+      // ignore invalid cached analytics payload
+    }
   }, [])
 
   // refresh queue when window/tab regains focus or when other tabs modify localStorage
@@ -176,6 +309,16 @@ export default function PublishQueue() {
     }
   }, [items])
 
+  // Show pending incomplete warning when user switches to Drafts tab
+  useEffect(() => {
+    if (activeTab === 'drafted' && pendingIncompleteWarning) {
+      setTimeout(() => {
+        showToast(pendingIncompleteWarning.message, 'error')
+        setPendingIncompleteWarning(null)
+      }, 300)
+    }
+  }, [activeTab])
+
   // close sort menu when clicking outside
   useEffect(() => {
     function onDocClick(e) {
@@ -215,6 +358,7 @@ export default function PublishQueue() {
     setLoading(true)
     try {
       const fetched = []
+      const prevById = new Map(items.map(it => [Number(it.id), it]))
       for (const entry of entries) {
         try {
           // derive numeric id and any local payload
@@ -257,7 +401,8 @@ export default function PublishQueue() {
             } catch (e) {
               // ignore — fall through to null-data handling
             }
-            fetched.push({ id, data: null })
+            const prev = prevById.get(Number(id))
+            fetched.push({ id, data: prev?.data ?? null })
             continue
           }
 
@@ -295,7 +440,8 @@ export default function PublishQueue() {
           fetched.push({ id, data: finalData })
         } catch (e) {
           const id = Number(entry && entry.id ? entry.id : entry)
-          fetched.push({ id, data: null, error: e.message || String(e) })
+          const prev = prevById.get(Number(id))
+          fetched.push({ id, data: prev?.data ?? null, error: e.message || String(e) })
         }
       }
       setItems(fetched)
@@ -402,9 +548,12 @@ export default function PublishQueue() {
   const isScheduled = (it) => {
     try {
       const d = it.data?.draft
-      if (!d) return false
-      if (!hasDraftScheduledAt(d)) return false
-      return draftHasTaxonomy(d)
+      const a = it.data?.article
+      // Scheduled tab should be driven by scheduling state, not taxonomy completeness.
+      // AI tagging may finish slightly later than scheduling for some backend flows.
+      const draftScheduled = hasDraftScheduledAt(d)
+      const articleScheduled = Boolean(a && (parseDateValid(a.ScheduledAt) || parseDateValid(a.scheduledAt)))
+      return draftScheduled || articleScheduled
     } catch (e) { return false }
   }
   const isLive = (it) => {
@@ -483,44 +632,93 @@ export default function PublishQueue() {
 
   // Handler for AI classification button - fetches suggestions for selected articles
   const handleAssignAIClassifications = async () => {
+    console.log('🔍 [AI Classify DEBUG] Button clicked')
+    console.log('🔍 [AI Classify DEBUG] selectedIds:', selectedIds)
+    
     if (!selectedIds || selectedIds.length === 0) {
+      console.warn('⚠️ [AI Classify DEBUG] No articles selected')
       showToast('Please select articles first', 'error')
       return
     }
+    
+    // Confirmation dialog
+    const count = selectedIds.length
+    const articleWord = count === 1 ? 'article' : 'articles'
+    if (!confirm(`AI Classify ${count} ${articleWord}?\n\nThis will automatically assign Industry and Topics of Interest tags based on article content.`)) {
+      return
+    }
+    
+    console.log(`✅ [AI Classify DEBUG] Proceeding with ${selectedIds.length} selected article(s)`)
     setSuggestionLoading(true)
+    
     try {
+      console.log('🚀 [AI Classify DEBUG] Calling suggestPublish API with IDs:', selectedIds)
       const res = await suggestPublish(selectedIds)
+      console.log('📩 [AI Classify DEBUG] API Response:', res)
+      
       const map = {}
       if (Array.isArray(res)) {
+        console.log('📊 [AI Classify DEBUG] Response is array with', res.length, 'items')
         for (const r of res) {
           const id = Number(r.id ?? r.NewsArticleId ?? r.newsArticleId ?? r.articleId ?? r.article?.NewsArticleId)
+          console.log('  - Processing item:', r, '-> ID:', id)
           if (!Number.isNaN(id)) map[id] = r
         }
       } else if (typeof res === 'object' && res !== null) {
+        console.log('📊 [AI Classify DEBUG] Response is object with keys:', Object.keys(res))
         for (const k of Object.keys(res)) {
           const id = Number(k)
           if (!Number.isNaN(id)) map[id] = res[k]
         }
       }
-      setSuggestions(prev => ({ ...(prev || {}), ...map }))
+      
+      console.log('🗺️ [AI Classify DEBUG] Mapped suggestions:', map)
+      setSuggestions(prev => {
+        const updated = { ...(prev || {}), ...map }
+        console.log('📝 [AI Classify DEBUG] Setting suggestions state:', updated)
+        return updated
+      })
+      
       // Persist AI suggestions to drafts so they survive reload and are visible in PublishArticle
       try {
         const dtos = []
+        const incompleteClassifications = []
         for (const k of Object.keys(map)) {
           const id = Number(k)
           if (Number.isNaN(id)) continue
           const v = map[k]
-          if (!v || v.error) continue
+          console.log(`💾 [AI Classify DEBUG] Processing suggestion for ID ${id}:`, v)
+          if (!v || v.error) {
+            console.warn(`⚠️ [AI Classify DEBUG] Skipping ID ${id} - has error or is null`)
+            continue
+          }
           const it = items.find(x => Number(x.id) === id)
           const d = it?.data?.draft
-          // If draft already has taxonomy, do not overwrite
-          const draftHasTax = d && (d.IndustryTagId || (d.InterestTags && d.InterestTags.length) || (d.InterestTagIds && d.InterestTagIds.length))
-          if (draftHasTax) continue
+          // Note: We removed the "skip if has taxonomy" check here because when user clicks
+          // "Re-Classify", they explicitly want to re-run AI classification even if tags exist.
+          // The button label changes to "Re-Classify" to indicate this behavior.
           const industryTagId = (typeof v.industryTagId !== 'undefined') ? v.industryTagId : null
           const interestTagIds = Array.isArray(v.interestTagIds) ? v.interestTagIds : []
-          if (industryTagId === null && (!interestTagIds || interestTagIds.length === 0)) continue
+          console.log(`  - industryTagId: ${industryTagId}, interestTagIds: ${JSON.stringify(interestTagIds)}`)
+          
+          // Track incomplete classifications
+          const missingTags = []
+          if (industryTagId === null) missingTags.push('Industry')
+          if (!interestTagIds || interestTagIds.length === 0) missingTags.push('Topics')
+          if (missingTags.length > 0) {
+            const articleTitle = getDisplayTitle(it) || `#${id}`
+            incompleteClassifications.push({ id, title: articleTitle, missing: missingTags })
+          }
+          
+          if (industryTagId === null && (!interestTagIds || interestTagIds.length === 0)) {
+            console.warn(`⚠️ [AI Classify DEBUG] Skipping ID ${id} - no valid tags`)
+            continue
+          }
           dtos.push({ NewsArticleId: id, IndustryTagId: industryTagId, InterestTagIds: interestTagIds })
         }
+        
+        console.log(`💾 [AI Classify DEBUG] DTOs to save (${dtos.length} total):`, dtos)
+        
         if (dtos.length > 0) {
           // Optimistically persist AI suggestions to client-side publishQueue so
           // the UI shows classifications even if the server call fails or is flaky.
@@ -543,34 +741,161 @@ export default function PublishQueue() {
                 if (Array.isArray(mergedDraft.InterestTagIds) && mergedDraft.InterestTagIds.length > 0 && Array.isArray(interestList) && interestList.length > 0) {
                   mergedDraft.InterestTags = mergedDraft.InterestTagIds.map(id => interestList.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id))).filter(Boolean)
                 }
-                const newEntry = { id: nid, data: { article: articleObj, draft: mergedDraft, en: existing?.data?.en, zh: existing?.data?.zh } }
+                // Preserve _unpublished flag if it exists on the existing entry
+                const newDataObj = { article: articleObj, draft: mergedDraft, en: existing?.data?.en, zh: existing?.data?.zh }
+                if (existing?.data?._unpublished) {
+                  newDataObj._unpublished = true
+                }
+                const newEntry = { id: nid, data: newDataObj }
                 if (idx >= 0) updated.splice(idx, 1, newEntry)
                 else updated.push(newEntry)
               }
+              console.log('💾 [AI Classify DEBUG] Saving to localStorage:', updated)
               localStorage.setItem('publishQueue', JSON.stringify(updated))
-            } catch (inner) { /* ignore localStorage errors */ }
+            } catch (inner) { 
+              console.error('❌ [AI Classify DEBUG] localStorage error:', inner)
+            }
 
-            await batchSaveDrafts(dtos)
+            console.log('📤 [AI Classify DEBUG] Calling batchSaveDrafts with DTOs')
+            const saveResponse = await batchSaveDrafts(dtos)
+            console.log('✅ [AI Classify DEBUG] batchSaveDrafts succeeded:', saveResponse)
+            
+            // Update localStorage with server confirmation to ensure persistence
+            try {
+              const rawQ = JSON.parse(localStorage.getItem('publishQueue') || '[]')
+              const entriesQ = Array.isArray(rawQ) ? rawQ : []
+              const updated = entriesQ.slice()
+              for (const dto of dtos) {
+                const nid = Number(dto.NewsArticleId)
+                if (Number.isNaN(nid)) continue
+                const idx = updated.findIndex(e => Number(e?.id ?? e) === nid)
+                if (idx >= 0 && updated[idx]?.data?.draft) {
+                  // Ensure the tags are persisted in localStorage after server save
+                  if (typeof dto.IndustryTagId !== 'undefined') {
+                    updated[idx].data.draft.IndustryTagId = dto.IndustryTagId
+                  }
+                  if (Array.isArray(dto.InterestTagIds)) {
+                    updated[idx].data.draft.InterestTagIds = dto.InterestTagIds.map(x => Number(x)).filter(x => !Number.isNaN(x))
+                    // Rebuild InterestTags objects for consistency
+                    if (updated[idx].data.draft.InterestTagIds.length > 0 && Array.isArray(interestList) && interestList.length > 0) {
+                      updated[idx].data.draft.InterestTags = updated[idx].data.draft.InterestTagIds.map(id => 
+                        interestList.find(x => String(x.id ?? x.InterestTagId ?? x.interestTagId) === String(id))
+                      ).filter(Boolean)
+                    }
+                  }
+                  // Preserve _unpublished flag if it exists
+                  if (updated[idx].data._unpublished) {
+                    updated[idx].data._unpublished = true
+                  }
+                }
+              }
+              localStorage.setItem('publishQueue', JSON.stringify(updated))
+              console.log('💾 [AI Classify DEBUG] Updated localStorage after server confirmation')
+            } catch (e) {
+              console.error('❌ [AI Classify DEBUG] Failed to update localStorage after save:', e)
+            }
+            
+            const classifiedIds = dtos.map(d => Number(d.NewsArticleId))
+            
             loadQueue()
-            showToast(`Applied AI suggestions to ${dtos.length} draft(s)`, 'success')
+            
+            // Helper to show incomplete classifications warning
+            const showIncompleteWarning = () => {
+              if (incompleteClassifications.length > 0) {
+                const messages = incompleteClassifications.map(item => 
+                  `"${item.title}": Missing ${item.missing.join(' & ')}`
+                )
+                const summary = incompleteClassifications.length === 1
+                  ? `AI couldn't confidently classify: ${messages[0]}. Please assign manually.`
+                  : `AI couldn't confidently classify ${incompleteClassifications.length} article(s):\n${messages.join('\n')}\nPlease assign missing tags manually.`
+                showToast(summary, 'error')
+              }
+            }
+            
+            // Show success toast - check if articles are in Drafts/Scheduled/Unpublished tab to determine notification type
+            const articleWord = dtos.length === 1 ? 'article' : 'articles'
+            const selectedItems = (selectedIds || [])
+              .map(id => items.find(x => Number(x.id) === Number(id)))
+              .filter(Boolean)
+            const allInDrafts = selectedItems.length > 0 && selectedItems.every(it => isDrafted(it))
+            const allInScheduled = selectedItems.length > 0 && selectedItems.every(it => isScheduled(it))
+            const allInUnpublished = activeTab === 'unpublished'
+            
+            if (allInDrafts || allInScheduled || allInUnpublished) {
+              // For re-classification in Drafts/Scheduled/Unpublished tab, just show simple success message
+              // followed by incomplete classifications warning
+              const scopeLabel = allInScheduled ? 'scheduled ' : (allInUnpublished ? 'unpublished ' : '')
+              showToast(`Successfully re-classified ${dtos.length} ${scopeLabel}${articleWord}`, 'success')
+              setTimeout(() => showIncompleteWarning(), 1000)
+            } else {
+              // For first-time classification, show action button to navigate to Drafts
+              // Store incomplete warning to show after user navigates
+              if (incompleteClassifications.length > 0) {
+                const messages = incompleteClassifications.map(item => 
+                  `"${item.title}": Missing ${item.missing.join(' & ')}`
+                )
+                const summary = incompleteClassifications.length === 1
+                  ? `AI couldn't confidently classify: ${messages[0]}. Please assign manually.`
+                  : `AI couldn't confidently classify ${incompleteClassifications.length} article(s):\n${messages.join('\n')}\nPlease assign missing tags manually.`
+                setPendingIncompleteWarning({ classifications: incompleteClassifications, message: summary })
+              }
+              
+              showToastWithAction(
+                `${dtos.length} ${articleWord} classified and moved to Drafts`,
+                'success',
+                'View in Drafts',
+                () => {
+                  setActiveTabPersist('drafted')
+                  setSelectedIds([])
+                  // Highlight all classified articles simultaneously
+                  classifiedIds.forEach(id => {
+                    setHighlightedArticleId(id)
+                  })
+                  // Clear highlights after 3 seconds
+                  setTimeout(() => setHighlightedArticleId(null), 3000)
+                  // Show incomplete classifications warning after navigation
+                  if (pendingIncompleteWarning) {
+                    setTimeout(() => showToast(pendingIncompleteWarning.message, 'error'), 300)
+                    setPendingIncompleteWarning(null)
+                  }
+                }
+              )
+            }
+
           } catch (e) {
-            console.error('Failed to save AI suggestions', e)
+            console.error('❌ [AI Classify DEBUG] Failed to save AI suggestions:', e)
             // We already attempted client-side persistence; inform user server persist failed.
             showToast('Failed to persist AI suggestions to server (saved locally)', 'error')
           }
         } else {
           const successCount = Object.keys(map).filter(k => !map[k].error).length
-          if (successCount > 0) showToast(`AI classifications available for ${successCount} article(s)`, 'info')
-          else showToast('AI could not classify the selected articles', 'error')
+          console.log(`ℹ️ [AI Classify DEBUG] No DTOs to save. Success count: ${successCount}`)
+          if (successCount > 0) {
+            showToast(`AI classifications available for ${successCount} article(s)`, 'info')
+            
+            // Show warning for incomplete classifications even when no DTOs to save
+            if (incompleteClassifications.length > 0) {
+              const messages = incompleteClassifications.map(item => 
+                `"${item.title}": Missing ${item.missing.join(' & ')}`
+              )
+              const summary = incompleteClassifications.length === 1
+                ? `AI couldn't confidently classify: ${messages[0]}. Please assign manually.`
+                : `AI couldn't confidently classify ${incompleteClassifications.length} article(s):\n${messages.join('\n')}\nPlease assign missing tags manually.`
+              setTimeout(() => showToast(summary, 'error'), 500)
+            }
+          } else {
+            showToast('AI could not classify the selected articles', 'error')
+          }
         }
       } catch (e) {
-        console.error('persist AI suggestions error', e)
+        console.error('❌ [AI Classify DEBUG] persist AI suggestions error:', e)
       }
     } catch (e) {
-      console.error('AI classification failed', e)
+      console.error('❌ [AI Classify DEBUG] AI classification failed:', e)
       showToast('AI classification failed: ' + (e.message || e), 'error')
     } finally {
       setSuggestionLoading(false)
+      console.log('🏁 [AI Classify DEBUG] Finished')
     }
   }
 
@@ -630,6 +955,33 @@ export default function PublishQueue() {
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize))
   const pageItems = sorted.slice((page - 1) * pageSize, page * pageSize)
+  const selectedItems = (selectedIds || [])
+    .map(id => items.find(x => Number(x.id) === Number(id)))
+    .filter(Boolean)
+  const hasPublishedSelected = selectedItems.some(it => isLive(it))
+  const classifyCandidates = selectedItems.filter(it => !isLive(it) && !isUnpublished(it))
+  const hasTaxonomySelected = classifyCandidates.some(it => articleHasTaxonomy(it.data?.article, it.data?.draft))
+  const hasNoTaxonomySelected = classifyCandidates.some(it => !articleHasTaxonomy(it.data?.article, it.data?.draft))
+  const hasMixedTaxonomySelection = hasTaxonomySelected && hasNoTaxonomySelected
+  const aiClassifyDisabled = !selectedIds || selectedIds.length === 0 || suggestionLoading || hasPublishedSelected || hasMixedTaxonomySelection
+  const aiClassifyLabel = !aiClassifyDisabled && hasTaxonomySelected && !hasNoTaxonomySelected ? 'Re-Classify' : 'AI Classify'
+  const aiClassifyTooltip = (() => {
+    if (!selectedIds || selectedIds.length === 0) return 'Select articles to classify'
+    if (hasPublishedSelected) return 'Published articles cannot be classified'
+    if (hasMixedTaxonomySelection) return 'Selected items mix classified and unclassified articles. Select only one type.'
+    return ''
+  })()
+  const quickActionsDisabled = !selectedIds || selectedIds.length === 0 || hasPublishedSelected
+  const quickActionsTooltip = (() => {
+    if (!selectedIds || selectedIds.length === 0) return 'Select articles first'
+    if (hasPublishedSelected) return 'Published articles cannot be scheduled or published again'
+    return ''
+  })()
+
+  useEffect(() => {
+    if (page > totalPages) setPagePersist(totalPages)
+    if (page < 1) setPagePersist(1)
+  }, [page, totalPages, activeTab])
 
   const toggleSelect = (id) => {
     if (!id) return
@@ -653,9 +1005,80 @@ export default function PublishQueue() {
     }
   }
 
+  const buildUnpublishedData = (existingData, it) => {
+    const data = { ...(existingData || {}) }
+    if (!data.article && it?.data?.article) data.article = it.data.article
+    data.draft = { ...(data.draft || {}) }
+    data.draft.HeroImageUrl = data.draft.HeroImageUrl || (data.article && (data.article.HeroImageUrl ?? data.article.heroImageUrl)) || (it && (it.data?.draft?.HeroImageUrl || it.data?.article?.HeroImageUrl)) || null
+    data._unpublished = true
+    if (data.article) {
+      delete data.article.PublishedAt
+      delete data.article.publishedAt
+      delete data.article.IsPublished
+      delete data.article.isPublished
+    }
+    return data
+  }
+
+  const applyUnpublishedLocal = (ids) => {
+    const idSet = new Set(ids.map(Number))
+    try {
+      const rawQ = JSON.parse(localStorage.getItem('publishQueue') || '[]')
+      const entriesQ = Array.isArray(rawQ) ? rawQ : []
+      const updated = entriesQ.map(e => {
+        const eid = Number(e?.id ?? e)
+        if (!idSet.has(eid)) return e
+        const it = items.find(x => Number(x.id) === eid)
+        const entryData = (typeof e === 'object' && e && e.data)
+          ? e.data
+          : (typeof e === 'object' && e && e.article ? { article: e.article, draft: e.draft } : null)
+        const data = buildUnpublishedData(entryData, it)
+        return { id: eid, data }
+      })
+
+      const existingIds = new Set(updated.map(e => Number(e?.id ?? e)))
+      ids.forEach((id) => {
+        const eid = Number(id)
+        if (existingIds.has(eid)) return
+        const it = items.find(x => Number(x.id) === eid)
+        const data = buildUnpublishedData(null, it)
+        updated.push({ id: eid, data })
+      })
+
+      localStorage.setItem('publishQueue', JSON.stringify(updated))
+    } catch (e) { /* ignore local storage errors */ }
+
+    setItems(prev => prev.map(it => {
+      if (!idSet.has(Number(it.id))) return it
+      const data = buildUnpublishedData(it?.data || null, it)
+      return { ...it, data }
+    }))
+  }
+
   const showToast = (msg, type = 'success') => {
     setToast({ message: msg, type })
     setTimeout(() => setToast(null), 3000)
+  }
+
+  const showToastWithAction = (msg, type = 'success', actionLabel, actionCallback) => {
+    setToast({ message: msg, type, action: { label: actionLabel, callback: actionCallback } })
+    setTimeout(() => setToast(null), 5000)
+  }
+
+  const handleGenerateTagAnalytics = async () => {
+    try {
+      setTagAnalyticsLoading(true)
+      const res = await generatePublishTagAnalytics({})
+      const payload = res?.data ?? res
+      if (!payload || typeof payload !== 'object') throw new Error('Invalid analytics response')
+      setTagAnalytics(payload)
+      try { localStorage.setItem(TAG_ANALYTICS_KEY, JSON.stringify(payload)) } catch (e) { /* ignore */ }
+      showToast('Tag analytics generated', 'success')
+    } catch (e) {
+      showToast('Failed to generate analytics: ' + (e.message || e), 'error')
+    } finally {
+      setTagAnalyticsLoading(false)
+    }
   }
 
   // direct publish helper removed — use `quickPublish` which saves drafts, applies AI and generates images before publishing
@@ -748,6 +1171,12 @@ export default function PublishQueue() {
       showToast('Please select a date and time', 'error')
       return
     }
+    // Prevent scheduling in the past
+    const scheduledDate = new Date(quickScheduleDate)
+    if (scheduledDate <= new Date()) {
+      showToast('Scheduled date and time must be in the future', 'error')
+      return
+    }
     if (quickScheduleArticles.length === 0) {
       showToast('No articles to schedule', 'error')
       return
@@ -756,80 +1185,76 @@ export default function PublishQueue() {
     setQuickScheduleProcessing(true)
     const total = quickScheduleArticles.length
     const articleIds = quickScheduleArticles.map(a => a.id)
-    
+
     try {
-      // Step 1: Apply AI classifications
-      setQuickScheduleProgress({ current: 0, total, status: 'Applying AI classifications...' })
-      const aiRes = await suggestPublish(articleIds)
-      const aiMap = {}
-      if (Array.isArray(aiRes)) {
-        for (const r of aiRes) {
-          const id = Number(r.id ?? r.NewsArticleId ?? r.newsArticleId)
-          if (!Number.isNaN(id)) aiMap[id] = r
-        }
-      } else if (typeof aiRes === 'object' && aiRes !== null) {
-        for (const k of Object.keys(aiRes)) {
-          const id = Number(k)
-          if (!Number.isNaN(id)) aiMap[id] = aiRes[k]
-        }
-      }
-      setSuggestions(prev => ({ ...(prev || {}), ...aiMap }))
-      
-      // Step 2: Generate hero images
-      setQuickScheduleProgress({ current: 0, total, status: 'Generating hero images...' })
-      for (let i = 0; i < articleIds.length; i++) {
-        const id = articleIds[i]
-        setQuickScheduleProgress({ current: i + 1, total, status: `Generating hero image ${i + 1}/${total}...` })
-        try {
-          const it = items.find(x => Number(x.id) === Number(id))
-          const a = it?.data?.article || {}
-          const d = it?.data?.draft || {}
-          const title = d.TitleEN ?? a.TitleEN ?? a.Title ?? ''
-          const content = d.FullContentEN ?? a.FullContentEN ?? ''
-          const url = await generateHeroFor(id, title, content)
-          if (!url) console.error('generateHeroImage returned no url for', id)
-        } catch (e) {
-          console.error('generateHeroImage failed for', id, e)
-        }
-      }
-      
-      // Step 3: Build DTOs with AI suggestions and schedule
-      setQuickScheduleProgress({ current: total, total, status: 'Scheduling articles...' })
-      const dtos = []
-      for (const id of articleIds) {
-        const it = items.find(x => Number(x.id) === Number(id))
-        const a = it?.data?.article || {}
-        const d = it?.data?.draft || {}
-        const sug = aiMap[id] || suggestions?.[id] || {}
-        
-        const FullContentEN = d.FullContentEN ?? a.FullContentEN ?? ''
-        const FullContentZH = d.FullContentZH ?? a.FullContentZH ?? ''
-        const TitleEN = d.TitleEN ?? a.TitleEN ?? a.Title ?? ''
-        const TitleZH = d.TitleZH ?? a.TitleZH ?? a.Title ?? ''
-        const IndustryTagId = sug.industryTagId ?? d.IndustryTagId ?? null
-        const InterestTagIds = sug.interestTagIds ?? (d.InterestTags || []).map(t => t.InterestTagId ?? t.id) ?? []
-        
-        dtos.push({
-          NewsArticleId: Number(id),
-          HeroImageUrl: d.HeroImageUrl ?? a.HeroImageUrl ?? null,
-          HeroImageSource: 'generated',
-          FullContentEN,
-          FullContentZH,
-          TitleEN,
-          TitleZH,
-          IndustryTagId,
-          InterestTagIds,
-          ScheduledAt: quickScheduleDate
+      const isoScheduledAt = new Date(quickScheduleDate).toISOString()
+      setQuickScheduleProgress({ current: 0, total, status: 'AI is analyzing, classifying, cleaning titles, and generating hero images...' })
+
+      const res = await quickScheduleBatch(articleIds, isoScheduledAt)
+      const results = Array.isArray(res) ? res : (Array.isArray(res?.results) ? res.results : [])
+      const successCount = results.length > 0 ? results.filter(r => r?.success).length : total
+      const failed = results.length > 0 ? results.filter(r => !r?.success) : []
+
+      // Strip local data payloads for processed IDs so loadQueue fetches fresh data from server,
+      // which will have ScheduledAt + taxonomy assigned by the backend AI process.
+      try {
+        const scheduledIdSet = new Set(articleIds.map(id => Number(id)))
+        const raw = JSON.parse(localStorage.getItem('publishQueue') || '[]')
+        const entries = Array.isArray(raw) ? raw : []
+        const stripped = entries.map(e => {
+          const eid = typeof e === 'number' ? Number(e) : Number(e?.id ?? e?.NewsArticleId ?? e?.article?.NewsArticleId ?? e?.article?.id)
+          return scheduledIdSet.has(eid) ? eid : e
         })
+        localStorage.setItem('publishQueue', JSON.stringify(stripped))
+      } catch (e) { /* ignore localStorage errors */ }
+
+      // Some backend quick-schedule flows are eventually consistent.
+      // Poll for scheduled state before showing success and switching tabs.
+      const isServerScheduled = (payload) => {
+        const root = payload?.data ?? payload
+        const draft = root?.draft || {}
+        const article = root?.article || {}
+        return hasDraftScheduledAt(draft) || parseDateValid(article?.ScheduledAt) || parseDateValid(article?.scheduledAt)
       }
-      
-      await batchSaveDrafts(dtos)
-      await batchPublish(articleIds, quickScheduleDate)
-      
-      showToast(`Successfully scheduled ${total} article(s)`, 'success')
+      const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+      const maxAttempts = 6
+      let confirmedScheduledCount = 0
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        setQuickScheduleProgress({
+          current: Math.min(total, Math.max(1, Math.round((attempt / maxAttempts) * total))),
+          total,
+          status: `Finalizing scheduled state (${attempt}/${maxAttempts})...`
+        })
+        const checks = await Promise.all(articleIds.map(async (id) => {
+          try {
+            const draftRes = await getPublishDraft(Number(id))
+            return isServerScheduled(draftRes)
+          } catch (e) {
+            return false
+          }
+        }))
+        confirmedScheduledCount = checks.filter(Boolean).length
+        if (confirmedScheduledCount === articleIds.length) break
+        await wait(900)
+      }
+
+      setQuickScheduleProgress({ current: total, total, status: 'Refreshing publish queue...' })
+      await loadQueue()
+
       setQuickScheduleModalOpen(false)
       setSelectedIds([])
-      loadQueue()
+      setActiveTabPersist('scheduled')
+      setPagePersist(1)
+
+      if (failed.length > 0) {
+        const firstError = failed[0]?.error || 'Unknown error'
+        showToast(`Quick schedule completed: ${successCount} succeeded, ${failed.length} failed (${firstError})`, 'error')
+      } else if (confirmedScheduledCount < articleIds.length) {
+        showToast(`Quick Schedule accepted. ${confirmedScheduledCount}/${articleIds.length} currently visible in Scheduled; remaining items are still finalizing.`, 'info')
+      } else {
+        const actionLabel = activeTab === 'scheduled' ? 'Quick Re-schedule' : 'Quick Schedule'
+        showToast(`${actionLabel} completed for ${successCount} article(s)`, 'success')
+      }
     } catch (e) {
       console.error('Quick Schedule failed', e)
       showToast('Quick Schedule failed: ' + (e.message || e), 'error')
@@ -838,48 +1263,114 @@ export default function PublishQueue() {
     }
   }
 
-  const quickPublish = async () => {
-    if (!selectedIds || selectedIds.length === 0) { alert('No articles selected'); return }
-    const useAISuggest = window.confirm('Apply AI-suggested classifications where available? (OK = yes)')
-    const genImages = window.confirm('Generate hero images for selected articles? (OK = yes)')
-    if (!window.confirm(`Publish ${selectedIds.length} selected article(s) now?`)) return
+  const quickPublish = () => {
+    if (!selectedIds || selectedIds.length === 0) {
+      showToast('Please select articles first', 'error')
+      return
+    }
+    openQuickPublishModal()
+  }
+
+  // Quick Publish modal state
+  const [quickPublishModalOpen, setQuickPublishModalOpen] = useState(false)
+  const [quickPublishArticleList, setQuickPublishArticleList] = useState([])
+  const [quickPublishProcessing, setQuickPublishProcessing] = useState(false)
+  const [quickPublishProgress, setQuickPublishProgress] = useState({ current: 0, total: 0, status: '' })
+
+  const openQuickPublishModal = () => {
+    const articles = selectedIds.map(id => {
+      const it = items.find(x => Number(x.id) === Number(id))
+      const a = it?.data?.article || {}
+      const d = it?.data?.draft || {}
+      const sug = suggestions?.[id] || {}
+
+      const industryId = sug.industryTagId ?? d.IndustryTagId ?? d.IndustryTag?.IndustryTagId ?? null
+      const industryTag = industryId ? findTagById(industryList, industryId) : null
+      const industryName = industryTag ? resolveTagName(industryTag, String(industryId)) : null
+
+      const interestIds = sug.interestTagIds ?? d.InterestTagIds ?? (d.InterestTags || []).map(t => t.InterestTagId ?? t.id) ?? []
+      const interestNames = (Array.isArray(interestIds) ? interestIds : []).map(id => {
+        const tag = findTagById(interestList, id)
+        return tag ? resolveTagName(tag, String(id)) : String(id)
+      }).filter(Boolean)
+
+      const heroUrl = d.HeroImageUrl ?? a.HeroImageUrl ?? null
+      const displayHeroUrl = (() => {
+        if (!heroUrl) return null
+        if (/^data:|^https?:\/\//i.test(heroUrl)) return heroUrl
+        const apiBase = (import.meta.env.VITE_API_BASE || window.location.origin)
+        return apiBase.replace(/\/$/, '') + (heroUrl.startsWith('/') ? heroUrl : '/' + heroUrl)
+      })()
+
+      return {
+        id: Number(id),
+        title: getDisplayTitle(it) || `Article #${id}`,
+        heroUrl: displayHeroUrl,
+        industryName,
+        interestNames,
+        hasAISuggestion: Boolean(sug.industryTagId || sug.interestTagIds)
+      }
+    })
+
+    setQuickPublishArticleList(articles)
+    setQuickPublishProgress({ current: 0, total: 0, status: '' })
+    setQuickPublishModalOpen(true)
+  }
+
+  const removeFromQuickPublish = (id) => {
+    setQuickPublishArticleList(prev => prev.filter(a => a.id !== id))
+  }
+
+  const submitQuickPublish = async () => {
+    if (quickPublishArticleList.length === 0) {
+      showToast('No articles to publish', 'error')
+      return
+    }
+
+    setQuickPublishProcessing(true)
+    const total = quickPublishArticleList.length
+    const articleIds = quickPublishArticleList.map(a => a.id)
+    const actionLabel = activeTab === 'unpublished' ? 'Quick Re-publish' : 'Quick Publish'
+
     try {
-      setLoading(true)
-      const dtos = []
-      for (const id of selectedIds) {
-        const it = items.find(x => Number(x.id) === Number(id))
-        const a = it?.data?.article || {}
-        const d = it?.data?.draft || {}
-        const sug = suggestions?.[id] || {}
-        const FullContentEN = d.FullContentEN ?? a.FullContentEN ?? ''
-        const FullContentZH = d.FullContentZH ?? a.FullContentZH ?? ''
-        const TitleEN = d.TitleEN ?? a.TitleEN ?? a.Title ?? ''
-        const TitleZH = d.TitleZH ?? a.TitleZH ?? a.Title ?? ''
-        const IndustryTagId = useAISuggest ? (sug.industryTagId ?? (d.IndustryTagId ?? null)) : (d.IndustryTagId ?? null)
-        const InterestTagIds = useAISuggest ? (sug.interestTagIds ?? (d.InterestTags || []).map(t => t.InterestTagId ?? t.id)) : ((d.InterestTags || []).map(t => t.InterestTagId ?? t.id))
-        dtos.push({ NewsArticleId: Number(id), HeroImageUrl: d.HeroImageUrl ?? a.HeroImageUrl ?? null, HeroImageSource: d.HeroImageSource ?? null, FullContentEN, FullContentZH, TitleEN, TitleZH, IndustryTagId, InterestTagIds, ScheduledAt: null })
-      }
-      if (genImages) {
-        for (const id of selectedIds) {
-          try {
-            const it = items.find(x => Number(x.id) === Number(id))
-            const a = it?.data?.article || {}
-            const d = it?.data?.draft || {}
-            const title = d.TitleEN ?? a.TitleEN ?? a.Title ?? ''
-            const content = d.FullContentEN ?? a.FullContentEN ?? ''
-            const url = await generateHeroFor(id, title, content)
-            if (!url) console.error('generateHeroImage returned no url for', id)
-          } catch (e) { console.error('generateHeroImage failed for', id, e) }
-        }
-      }
-      await batchSaveDrafts(dtos)
-      await batchPublish(selectedIds, null)
-      showToast('Published selected articles')
+      setQuickPublishProgress({ current: 0, total, status: 'AI is analyzing, classifying, cleaning titles, and generating hero images...' })
+
+      // Strip local data for processed IDs so loadQueue fetches fresh server data
+      try {
+        const publishIdSet = new Set(articleIds.map(id => Number(id)))
+        const raw = JSON.parse(localStorage.getItem('publishQueue') || '[]')
+        const entries = Array.isArray(raw) ? raw : []
+        const stripped = entries.map(e => {
+          const eid = typeof e === 'number' ? Number(e) : Number(e?.id ?? e?.NewsArticleId ?? e?.article?.NewsArticleId ?? e?.article?.id)
+          return publishIdSet.has(eid) ? eid : e
+        })
+        localStorage.setItem('publishQueue', JSON.stringify(stripped))
+      } catch (e) { /* ignore */ }
+
+      const res = await quickPublishArticles(articleIds)
+      const results = Array.isArray(res) ? res : (Array.isArray(res?.results) ? res.results : [])
+      const successCount = results.length > 0 ? results.filter(r => r?.success).length : total
+      const failed = results.length > 0 ? results.filter(r => !r?.success) : []
+
+      setQuickPublishProgress({ current: total, total, status: 'Refreshing publish queue...' })
+      await loadQueue()
+
+      setQuickPublishModalOpen(false)
       setSelectedIds([])
-      loadQueue()
+      setActiveTabPersist('published')
+
+      if (failed.length > 0) {
+        const firstError = failed[0]?.error || 'Unknown error'
+        showToast(`${actionLabel} completed: ${successCount} succeeded, ${failed.length} failed (${firstError})`, 'error')
+      } else {
+        showToast(`${actionLabel} completed for ${successCount} article(s)`, 'success')
+      }
     } catch (e) {
-      showToast('Quick Publish failed: ' + (e.message || e), 'error')
-    } finally { setLoading(false) }
+      console.error('Quick Publish failed', e)
+      showToast(`${actionLabel} failed: ` + (e.message || e), 'error')
+    } finally {
+      setQuickPublishProcessing(false)
+    }
   }
 
   // Quick action modal state and helpers
@@ -982,60 +1473,22 @@ export default function PublishQueue() {
 
   const handleUnpublishArticle = async (id) => {
     if (!id) return
-    if (!confirm('Unpublish this article? It will move to Unpublished.')) return
+    const selectedPublished = (selectedIds || []).filter(selId => {
+      const it = items.find(x => Number(x.id) === Number(selId))
+      return it && isLive(it)
+    })
+    const useSelected = selectedPublished.length > 0 && selectedPublished.includes(Number(id))
+    const idsToUnpublish = useSelected ? selectedPublished : [Number(id)]
+    if (!confirm(`Unpublish ${idsToUnpublish.length} article${idsToUnpublish.length !== 1 ? 's' : ''}? They will move to Unpublished.`)) return
     try {
       setLoading(true)
-      const res = await batchUnpublish([id])
-      // mark local queue entry as unpublished so UI surfaces it under the Unpublished tab
-      try {
-        const rawQ = JSON.parse(localStorage.getItem('publishQueue') || '[]')
-        const entriesQ = Array.isArray(rawQ) ? rawQ : []
-        const updated = entriesQ.slice()
-        const idx = updated.findIndex(e => Number(e?.id ?? e) === Number(id))
-        const it = items.find(x => Number(x.id) === Number(id))
-        if (idx >= 0) {
-          const existing = updated[idx]
-          const data = (typeof existing === 'object' && existing && existing.data) ? { ...(existing.data || {}) } : { article: existing?.article || null }
-          // ensure draft object exists and preserve hero image from draft or article
-          data.draft = { ...(data.draft || {}) }
-          data.draft.HeroImageUrl = data.draft.HeroImageUrl || (data.article && (data.article.HeroImageUrl ?? data.article.heroImageUrl)) || (it && (it.data?.draft?.HeroImageUrl || it.data?.article?.HeroImageUrl)) || null
-          data._unpublished = true
-          if (data.article) {
-            delete data.article.PublishedAt
-            delete data.article.publishedAt
-            delete data.article.IsPublished
-            delete data.article.isPublished
-          }
-          updated.splice(idx, 1, { id: Number(id), data })
-          localStorage.setItem('publishQueue', JSON.stringify(updated))
-        } else {
-          // If no local entry exists, add one so the item is visible under Unpublished with its hero preserved
-          const articleObj = (it && it.data && it.data.article) ? it.data.article : null
-          const hero = (it && it.data && (it.data.draft?.HeroImageUrl || it.data.article?.HeroImageUrl)) || null
-          const newData = { article: articleObj, draft: { HeroImageUrl: hero }, _unpublished: true }
-          updated.push({ id: Number(id), data: newData })
-          localStorage.setItem('publishQueue', JSON.stringify(updated))
-        }
-      } catch (inner) { /* ignore local storage errors */ }
+      const res = await batchUnpublish(idsToUnpublish)
+      applyUnpublishedLocal(idsToUnpublish)
+      if (useSelected) {
+        setSelectedIds(prev => prev.filter(selId => !idsToUnpublish.includes(Number(selId))))
+      }
 
-      // update in-memory items for immediate UI feedback and preserve hero image
-      setItems(prev => prev.map(it => {
-        if (Number(it.id) !== Number(id)) return it
-        const newData = { ...(it.data || {}) }
-        newData._unpublished = true
-        // ensure draft exists and preserve hero image
-        newData.draft = { ...(newData.draft || {}) }
-        newData.draft.HeroImageUrl = newData.draft.HeroImageUrl || (newData.article && (newData.article.HeroImageUrl ?? newData.article.heroImageUrl)) || null
-        if (newData.article) {
-          delete newData.article.PublishedAt
-          delete newData.article.publishedAt
-          delete newData.article.IsPublished
-          delete newData.article.isPublished
-        }
-        return { ...it, data: newData }
-      }))
-
-      showToast('Unpublish request sent', 'success')
+      showToast('Unpublished article', 'success')
       try { window.dispatchEvent(new Event('articles:changed')) } catch (e) {}
       loadQueue()
     } catch (err) {
@@ -1058,14 +1511,14 @@ export default function PublishQueue() {
             <div>
             <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
               <div style={{ background: 'white', padding: 16, borderRadius: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.06)', flex: 1 }}>
-                <div style={{ color: '#1e73d1', fontSize: 13, fontWeight: 700 }}>Ready To Publish</div>
+                <div style={{ color: '#1e73d1', fontSize: 13, fontWeight: 700 }}>Ready-to-Publish</div>
                 <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6, color: '#1e73d1' }}>{totalCounts.pending}</div>
-                <div style={{ color: '#1e73d1', fontSize: 12, marginTop: 8 }}>To be published</div>
+                <div style={{ color: '#1e73d1', fontSize: 12, marginTop: 8 }}>Not started</div>
               </div>
               <div style={{ background: 'white', padding: 16, borderRadius: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.06)', flex: 1 }}>
-                <div style={{ color: '#aaa', fontSize: 13, fontWeight: 700 }}>Drafted</div>
+                <div style={{ color: '#aaa', fontSize: 13, fontWeight: 700 }}>Drafts</div>
                 <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6, color: '#aaa' }}>{totalCounts.drafted}</div>
-                <div style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>Actively publishing</div>
+                <div style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>Articles in progress</div>
               </div>
               <div style={{ background: 'white', padding: 16, borderRadius: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.06)', flex: 1 }}>
                 <div style={{ color: '#e07a16', fontSize: 13, fontWeight: 700 }}>Scheduled</div>
@@ -1084,90 +1537,211 @@ export default function PublishQueue() {
               </div>
             </div>
 
+            <div style={{ background: 'white', padding: 16, borderRadius: 10, boxShadow: '0 4px 12px rgba(0,0,0,0.06)', marginBottom: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#887B76' }}>Tag Analytics (AI)</div>
+              
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                  <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12, color: '#887B76' }}>
+                    <span><strong>Generated:</strong> {tagAnalytics?.generatedAt ? new Date(tagAnalytics.generatedAt).toLocaleString() : '-'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button
+                      onClick={handleGenerateTagAnalytics}
+                      disabled={tagAnalyticsLoading}
+                      style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: tagAnalyticsLoading ? 'not-allowed' : 'pointer', background: tagAnalyticsLoading ? '#e2e8f0' : '#1e73d1', color: '#fff', fontSize: 12, fontWeight: 600 }}
+                    >
+                      {tagAnalyticsLoading ? 'Generating...' : (tagAnalytics ? 'Re-generate' : 'Generate')}
+                    </button>
+                  </div>
+                </div>
+
+                {!tagAnalytics ? (
+                  <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                    Generate analytics to view AI insights on tag usage, coverage gaps, and publishing recommendations.
+                  </div>
+                ) : (
+                  <div>
+                    {showTagAnalytics ? (
+                      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', marginTop: 6 }}>
+                        <div style={{ fontSize: 13, color: '#334155', background: '#f8fafc', borderRadius: 8, padding: 12, lineHeight: 1.6, flex: 1 }}>
+                          {(() => {
+                            const raw = tagAnalytics?.aiAnalysis || ''
+                            const full = sanitizeAndShortenAnalytics(raw, 5000) || ''
+                            const short = sanitizeAndShortenAnalytics(raw, 300) || ''
+                            if (!full) return 'No AI analysis text returned.'
+                            return renderAnalyticsContent(tagAnalyticsExpanded ? full : short)
+                          })()}
+                        </div>
+                        {(() => {
+                          const raw = tagAnalytics?.aiAnalysis || ''
+                          const full = sanitizeAndShortenAnalytics(raw, 5000) || ''
+                          const short = sanitizeAndShortenAnalytics(raw, 300) || ''
+                          if (!full || full.length <= short.length) return null
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <button
+                                onClick={() => setTagAnalyticsExpanded(s => !s)}
+                                style={{ padding: '6px 10px', borderRadius: 6, border: 'none', cursor: 'pointer', background: '#1e73d1', color: '#fff', fontSize: 12, fontWeight: 600 }}
+                              >
+                                {tagAnalyticsExpanded ? 'Show less' : 'Show more'}
+                              </button>
+                            </div>
+                          )
+                        })()}
+                      </div>
+                      ) : (
+                      <div style={{ fontSize: 12, color: '#334155', background: '#f8fafc', borderRadius: 8, padding: 10, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                        {renderAnalyticsContent(tagAnalytics.aiAnalysis, 800) || 'No AI analysis text returned.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div style={styles.tableCard}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
-                  <div onClick={() => setActiveTabPersist('ready')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'ready' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: '#887B76' }}>Ready to Publish</div>
-                  <div onClick={() => setActiveTabPersist('drafted')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'drafted' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: '#887B76' }}>Drafted</div>
-                  <div onClick={() => setActiveTabPersist('scheduled')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'scheduled' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: '#887B76' }}>Scheduled</div>
-                  <div onClick={() => setActiveTabPersist('published')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'published' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: '#887B76' }}>Published</div>
-                  <div onClick={() => setActiveTabPersist('unpublished')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'unpublished' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: '#887B76' }}>Unpublished</div>
+                  <div onClick={() => setActiveTabPersist('ready')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'ready' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: activeTab === 'ready' ? '#BA0006' : '#887B76', transition: 'all 0.3s ease' }}>Ready-to-Publish</div>
+                  <div onClick={() => setActiveTabPersist('drafted')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'drafted' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: activeTab === 'drafted' ? '#BA0006' : '#887B76', transition: 'all 0.3s ease' }}>Drafts</div>
+                  <div onClick={() => setActiveTabPersist('scheduled')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'scheduled' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: activeTab === 'scheduled' ? '#BA0006' : '#887B76', transition: 'all 0.3s ease' }}>Scheduled</div>
+                  <div onClick={() => setActiveTabPersist('published')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'published' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: activeTab === 'published' ? '#BA0006' : '#887B76', transition: 'all 0.3s ease' }}>Published</div>
+                  <div onClick={() => setActiveTabPersist('unpublished')} style={{ padding: '6px 12px', cursor: 'pointer', borderBottom: activeTab === 'unpublished' ? '2px solid #c92b2b' : '2px solid transparent', fontWeight: 600, whiteSpace: 'nowrap', fontSize: 13, color: activeTab === 'unpublished' ? '#BA0006' : '#887B76', transition: 'all 0.3s ease' }}>Unpublished</div>
                 </div>
 
                 <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                  <button 
-                    onClick={handleAssignAIClassifications} 
-                    disabled={!selectedIds || selectedIds.length === 0 || suggestionLoading} 
-                    style={{ 
-                      padding: '4px 8px', 
-                      borderRadius: 4, 
-                      fontSize: 11, 
-                      fontWeight: 600,
-                      background: selectedIds && selectedIds.length > 0 ? 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)' : '#f2f2f2', 
-                      color: selectedIds && selectedIds.length > 0 ? '#fff' : '#999', 
-                      border: 'none', 
-                      cursor: selectedIds && selectedIds.length > 0 && !suggestionLoading ? 'pointer' : 'default',
-                      boxShadow: selectedIds && selectedIds.length > 0 ? '0 2px 6px rgba(186, 0, 6, 0.25)' : 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4
-                    }}
-                  >
-                    {suggestionLoading ? (
-                      <span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-                    ) : (
-                      <span style={{ fontSize: 10 }}>✨</span>
-                    )}
-                    {suggestionLoading ? 'Classifying...' : 'AI Classify'}
-                  </button>
-                  <button onClick={openQuickScheduleModal} disabled={!selectedIds || selectedIds.length === 0} style={{ padding: '4px 8px', borderRadius: 4, fontSize: 11, fontWeight: 500, background: selectedIds && selectedIds.length > 0 ? '#e07a16' : '#f2f2f2', color: selectedIds && selectedIds.length > 0 ? '#fff' : '#999', border: 'none', cursor: selectedIds && selectedIds.length > 0 ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 4 }}><span>📅</span> Quick Schedule</button>
-                  <button onClick={quickPublish} disabled={!selectedIds || selectedIds.length === 0} style={{ padding: '4px 8px', borderRadius: 4, fontSize: 11, fontWeight: 500, background: selectedIds && selectedIds.length > 0 ? '#1e7a3a' : '#f2f2f2', color: selectedIds && selectedIds.length > 0 ? '#fff' : '#999', border: 'none', cursor: selectedIds && selectedIds.length > 0 ? 'pointer' : 'default' }}>Publish</button>
+                  {activeTab !== 'published' && (
+                    <>
+                      <button 
+                        onClick={handleAssignAIClassifications} 
+                        disabled={aiClassifyDisabled} 
+                        title={aiClassifyTooltip}
+                        style={{ 
+                          padding: '3px 6px', 
+                          borderRadius: 4, 
+                          fontSize: 10, 
+                          fontWeight: 600,
+                          background: (selectedIds && selectedIds.length > 0 && !aiClassifyDisabled) ? 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)' : '#f2f2f2', 
+                          color: (selectedIds && selectedIds.length > 0 && !aiClassifyDisabled) ? '#fff' : '#999', 
+                          border: 'none', 
+                          cursor: selectedIds && selectedIds.length > 0 && !aiClassifyDisabled ? 'pointer' : 'default',
+                          boxShadow: (selectedIds && selectedIds.length > 0 && !aiClassifyDisabled) ? '0 2px 6px rgba(186, 0, 6, 0.25)' : 'none',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                      >
+                        {suggestionLoading ? (
+                          <span style={{ display: 'inline-block', width: 10, height: 10, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                        ) : (
+                          <span style={{ fontSize: 10 }}>✨</span>
+                        )}
+                        {suggestionLoading ? 'Classifying...' : (activeTab === 'unpublished' && selectedIds.length > 0 ? 'Re-classify' : aiClassifyLabel)}
+                      </button>
+                      <>
+                        <button onClick={openQuickScheduleModal} disabled={quickActionsDisabled} title={quickActionsTooltip} style={{ padding: '3px 6px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#e07a16' : '#f2f2f2', color: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#fff' : '#999', border: 'none', cursor: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? 'pointer' : 'default', display: 'flex', alignItems: 'center', gap: 4 }}><span>📅</span> {activeTab === 'scheduled' ? 'Quick Re-schedule' : 'Quick Schedule'}</button>
+                        <button onClick={quickPublish} disabled={quickActionsDisabled} title={quickActionsTooltip} style={{ padding: '3px 6px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#1e7a3a' : '#f2f2f2', color: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? '#fff' : '#999', border: 'none', cursor: (selectedIds && selectedIds.length > 0 && !quickActionsDisabled) ? 'pointer' : 'default' }}><span>📤</span>{activeTab === 'unpublished' ? 'Quick Re-publish' : 'Quick Publish'}</button>
+                      </>
+                    </>
+                  )}
                   {/* 'Publish Selected' removed per request — use Quick Publish instead */}
                   {/* Language toggle (row content only) */}
-                  <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden', border: '1px solid #e2e2e2' }}>
+                  <div style={{ display: 'flex', overflow: 'visible'}}>
                     <button 
                       onClick={() => setDisplayLang('EN')} 
                       style={{ 
-                        padding: '4px 8px', 
-                        fontSize: 10, 
+                        padding: '3px 6px', 
+                        fontSize: 9, 
                         fontWeight: 600,
-                        background: displayLang === 'EN' ? '#BA0006' : '#fff', 
+                        background: displayLang === 'EN' ? 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)' : '#fff', 
                         color: displayLang === 'EN' ? '#fff' : '#666', 
                         border: 'none', 
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
                       }}
                     >EN</button>
                     <button 
                       onClick={() => setDisplayLang('ZH')} 
                       style={{ 
-                        padding: '4px 8px', 
-                        fontSize: 10, 
+                        padding: '3px 6px', 
+                        fontSize: 9, 
                         fontWeight: 600,
-                        background: displayLang === 'ZH' ? '#BA0006' : '#fff', 
+                        background: displayLang === 'ZH' ? 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)' : '#fff', 
                         color: displayLang === 'ZH' ? '#fff' : '#666', 
                         border: 'none', 
                         borderLeft: '1px solid #e2e2e2',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
                       }}
                     >中文</button>
                   </div>
                 </div>
               </div>
 
-              <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8, fontSize: 12 }}>
-                <thead>
-                  <tr style={{ textAlign: 'left', borderBottom: '1px solid #e8e8e8', background: '#fafafa' }}>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', width: 32 }}><input type="checkbox" checked={isAllSelected} onChange={toggleSelectAll} style={{ width: 14, height: 14 }} /></th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Title</th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Industry</th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Topics</th>
-                    {/* AI Suggestion column removed - suggestions now show under Industry / Topics */}
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Status</th>
-                    <th style={{ padding: '8px 4px', fontSize: 10, fontWeight: 600, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageItems.map((it) => {
+              {pageItems.length === 0 ? (
+                <div style={{ 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  padding: '70px 20px',
+                  textAlign: 'center'
+                }}>
+                  <div style={{ 
+                    fontSize: 48, 
+                    marginBottom: 16,
+                    opacity: 0.4
+                  }}>
+                    {activeTab === 'ready' ? '📋' : activeTab === 'drafted' ? '✏️' : activeTab === 'scheduled' ? '📅' : activeTab === 'published' ? '✅' : '🔄'}
+                  </div>
+                  <h3 style={{ 
+                    fontSize: 18, 
+                    fontWeight: 600, 
+                    color: '#333', 
+                    marginBottom: 8 
+                  }}>
+                    No {activeTab === 'ready' ? 'Ready' : activeTab === 'drafted' ? 'Drafts' : activeTab === 'scheduled' ? 'Scheduled' : activeTab === 'published' ? 'Published' : 'Unpublished'} Articles
+                  </h3>
+                  <p style={{ 
+                    fontSize: 14, 
+                    color: '#888', 
+                    maxWidth: 400,
+                    lineHeight: 1.5
+                  }}>
+                    {activeTab === 'ready' 
+                      ? 'Articles you add to the publish queue will appear here. Browse Articles List and add some to your queue.'
+                      : activeTab === 'drafted'
+                      ? 'Save articles as drafts to work on them later. Drafts will appear here once you save them.'
+                      : activeTab === 'scheduled'
+                      ? 'Schedule articles for future publishing. Scheduled articles will appear here.'
+                      : activeTab === 'published'
+                      ? 'Published articles will appear here once you publish them to your platform.'
+                      : 'Articles you unpublish will appear here for review or re-publishing.'
+                    }
+                  </p>
+                </div>
+              ) : (
+                <div style={{ border: '1px solid #eef0f3', borderRadius: 14, overflow: 'hidden', background: '#fff', boxShadow: '0 6px 24px rgba(0,0,0,0.05)' }}>
+                  <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', borderBottom: '1px solid #eef0f3', background: 'linear-gradient(180deg, #fafafa 0%, #f5f6f8 100%)' }}>
+                        <th style={{ padding: '12px 10px 12px 20px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.8px', width: 36 }}>
+                          <input type="checkbox" checked={isAllSelected} onChange={toggleSelectAll} style={{ width: 15, height: 15, cursor: 'pointer' }} />
+                        </th>
+                        <th style={{ padding: '12px 10px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Title</th>
+                        <th style={{ padding: '12px 10px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Industry</th>
+                        <th style={{ padding: '12px 10px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Topics</th>
+                        {/* AI Suggestion column removed - suggestions now show under Industry / Topics */}
+                        <th style={{ padding: '12px 10px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Status</th>
+                        <th style={{ padding: '12px 10px', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pageItems.map((it, idx) => {
                     const a = it.data?.article || {}
                     const d = it.data?.draft || {}
                     const nid = it.id
@@ -1190,11 +1764,28 @@ export default function PublishQueue() {
                     else if (isLive(it)) status = 'Published'
                     else if (isDrafted(it)) status = 'Drafted'
                     else status = 'Pending'
+                    
+                    const isHighlighted = highlightedArticleId === nid
+                    const baseBackground = idx % 2 === 0 ? '#ffffff' : '#fcfcfd'
+                    
                     return (
-                      <tr key={nid} style={{ borderBottom: '1px solid #f2f2f2' }}>
-                        <td style={{ padding: 8, verticalAlign: 'middle' }}><input type="checkbox" checked={selectedIds.includes(nid)} onChange={() => toggleSelect(nid)} /></td>
-                        <td style={{ padding: 8, color: '#111', fontSize: 13, lineHeight: '1.3', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 280, verticalAlign: 'middle' }}>{title}</td>
-                        <td style={{ padding: 8, color: '#333', fontSize: 13, whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
+                      <tr 
+                        key={nid}
+                        style={{ 
+                          borderBottom: isHighlighted ? '2px solid rgba(186, 0, 6, 0.3)' : '1px solid #f0f2f5',
+                          background: isHighlighted ? 'linear-gradient(135deg, #FFF5F5 0%, #FFE8E8 100%)' : baseBackground,
+                          transition: isHighlighted ? 'none' : 'background 0.2s ease, box-shadow 0.2s ease',
+                          animation: isHighlighted ? 'highlightPulse 1.5s ease-in-out 2' : 'none',
+                          boxShadow: isHighlighted ? '0 0 20px 5px rgba(186, 0, 6, 0.2), inset 0 0 30px rgba(186, 0, 6, 0.1)' : 'none',
+                          position: 'relative',
+                          transform: isHighlighted ? 'scale(1.01)' : 'scale(1)'
+                        }}
+                        onMouseOver={e => { if (!isHighlighted) e.currentTarget.style.background = '#f8fafc' }}
+                        onMouseOut={e => { if (!isHighlighted) e.currentTarget.style.background = baseBackground }}
+                      >
+                        <td style={{ padding: '12px 20px 12px 20px', verticalAlign: 'middle' }}><input type="checkbox" checked={selectedIds.includes(nid)} onChange={() => toggleSelect(nid)} style={{ width: 14, height: 14, cursor: 'pointer' }} /></td>
+                        <td style={{ padding: '12px 10px', color: '#111', fontSize: 13, fontWeight: 600, lineHeight: '1.35', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 320, verticalAlign: 'middle' }}>{title}</td>
+                        <td style={{ padding: '12px 10px', color: '#333', fontSize: 13, whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
                           {(() => {
                             const sug = suggestions?.[nid]
                             const d = it.data?.draft || {}
@@ -1338,7 +1929,7 @@ export default function PublishQueue() {
                           })()}
                         </td>
                         {/* AI suggestion cell removed to keep table columns aligned; suggestions show under Industry/Topics */}
-                        <td style={{ padding: 6 }}>
+                        <td style={{ padding: '12px 10px' }}>
                           <span style={{
                             padding: '3px 6px',
                             borderRadius: 8,
@@ -1348,7 +1939,7 @@ export default function PublishQueue() {
                             color: status === 'Unpublished' ? '#c62828' : (status === 'Pending' ? '#1e73d1' : (status === 'Scheduled' ? '#e07a16' : (status === 'Drafted' ? '#aaa' : '#1e7a3a')))
                           }}>{status}</span>
                         </td>
-                        <td style={{ padding: 6 }}>
+                        <td style={{ padding: '12px 20px 12px 10px' }}>
                           <div style={{ display: 'flex', gap: 4 }}>
                             {isLive(it) ? (
                               <>
@@ -1356,7 +1947,7 @@ export default function PublishQueue() {
                                   onClick={() => setArticlePreview({ id: nid, data: it.data })}
                                   title="Preview article"
                                   style={{ 
-                                    background: 'linear-gradient(135deg, #BA0006 0%, #8B0005 100%)', 
+                                    
                                     color: 'white', 
                                     border: 'none', 
                                     padding: '4px 8px', 
@@ -1368,17 +1959,30 @@ export default function PublishQueue() {
                                     gap: 4
                                   }}
                                 >
-                                  👁️
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#887B76" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                  </svg>
                                 </button>
                                 <button onClick={() => handleUnpublishArticle(nid)} style={{ background: '#777', color: 'white', border: 'none', padding: '4px 8px', borderRadius: 4, fontSize: 11 }}>Unpublish</button>
                               </>
                             ) : (
                               <>
-                                <button style={{ background: '#c92b2b', color: 'white', border: 'none', padding: '4px 8px', borderRadius: 4, fontSize: 11 }} onClick={() => navigate(`/consultant/publish/${nid}`)}>{isUnpublished(it) ? 'Re-publish' : (isDrafted(it) || isScheduled(it) ? 'Edit' : 'Start')}</button>
+                                <button style={{ border: 'none', padding: '4px 8px', borderRadius: 4, fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }} onClick={() => {
+                                  try {
+                                    localStorage.setItem('publishQueue.lastState', JSON.stringify({ tab: activeTab }))
+                                  } catch (e) { /* ignore */ }
+                                  navigate(`/consultant/publish/${nid}`)
+                                }}>
+                                  {(isDrafted(it) || isScheduled(it)) && (
+                                    <span>✏️</span>
+                                  )}
+                                  {isUnpublished(it) ? 'Edit' : (isDrafted(it) || isScheduled(it) ? '' : 'Start')}
+                                </button>
                                 <button
                                   title="Delete article"
                                   onClick={() => handleDeleteArticle(nid)}
-                                  style={{ background: 'transparent', color: '#c43d3d', border: '1px solid #f2dede', padding: '4px 6px', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}
+                                  style={{ border: '1px solid #f2dede', padding: '4px 6px', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}
                                 >
                                   🗑️
                                 </button>
@@ -1391,6 +1995,8 @@ export default function PublishQueue() {
                   })}
                 </tbody>
               </table>
+            </div>
+              )}
 
               {previewOpen && (
                 <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2000 }} onClick={() => setPreviewOpen(false)}>
@@ -1448,22 +2054,78 @@ export default function PublishQueue() {
                         <span style={{ fontSize: 20 }}>📰</span>
                         <span style={{ fontWeight: 700, fontSize: 16 }}>Article Preview</span>
                       </div>
-                      <button 
-                        onClick={() => setArticlePreview(null)} 
-                        style={{ 
-                          background: 'rgba(255,255,255,0.2)', 
-                          border: 'none', 
-                          color: 'white',
-                          width: 32,
-                          height: 32,
-                          borderRadius: '50%',
-                          fontSize: 16, 
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center'
-                        }}
-                      >✕</button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        {/* Original Link Button */}
+                        {(() => {
+                          const d = articlePreview?.data?.draft || {}
+                          const a = articlePreview?.data?.article || {}
+                          const originalLink = d.OriginalArticleLink || d.originalArticleLink || a.OriginalArticleLink || a.originalArticleLink
+                          return originalLink ? (
+                            <button
+                              onClick={() => window.open(originalLink, '_blank')}
+                              title="Open original article"
+                              style={{
+                                background: 'rgba(255,255,255,0.2)',
+                                border: '1px solid rgba(255,255,255,0.3)',
+                                color: 'white',
+                                padding: '6px 12px',
+                                borderRadius: 6,
+                                fontSize: 12,
+                                fontWeight: 500,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4
+                              }}
+                            >
+                              <span>🔗</span> Original
+                            </button>
+                          ) : null
+                        })()}
+                        {/* Language Toggle */}
+                        <div style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.3)' }}>
+                          <button 
+                            onClick={() => setPreviewLang('EN')} 
+                            style={{ 
+                              padding: '6px 12px', 
+                              fontSize: 12, 
+                              fontWeight: 600,
+                              background: previewLang === 'EN' ? 'rgba(255,255,255,0.25)' : 'transparent', 
+                              color: 'white', 
+                              border: 'none', 
+                              cursor: 'pointer'
+                            }}
+                          >EN</button>
+                          <button 
+                            onClick={() => setPreviewLang('ZH')} 
+                            style={{ 
+                              padding: '6px 12px', 
+                              fontSize: 12, 
+                              fontWeight: 600,
+                              background: previewLang === 'ZH' ? 'rgba(255,255,255,0.25)' : 'transparent', 
+                              color: 'white', 
+                              border: 'none',
+                              cursor: 'pointer'
+                            }}
+                          >中文</button>
+                        </div>
+                        <button 
+                          onClick={() => {setArticlePreview(null); setPreviewLang('EN')}} 
+                          style={{ 
+                            background: 'rgba(255,255,255,0.2)', 
+                            border: 'none', 
+                            color: 'white',
+                            width: 32,
+                            height: 32,
+                            borderRadius: '50%',
+                            fontSize: 16, 
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                        >✕</button>
+                      </div>
                     </div>
 
                     {/* Modal Body */}
@@ -1482,13 +2144,13 @@ export default function PublishQueue() {
                         // Get industry tag
                         const industryId = d.IndustryTagId || d.IndustryTag?.IndustryTagId || d.IndustryTag?.id || a.IndustryTagId
                         const industryTag = industryId ? findTagById(industryList, industryId) : null
-                        const industryName = industryTag ? resolveTagName(industryTag, String(industryId)) : (industryId ? String(industryId) : 'Unassigned')
+                        const industryName = industryTag ? resolveTagName(industryTag, String(industryId), previewLang) : (industryId ? String(industryId) : 'Unassigned')
                         
                         // Get interest tags
                         const interestIds = d.InterestTagIds || (d.InterestTags ? d.InterestTags.map(t => t.InterestTagId || t.id) : []) || a.InterestTagIds || []
                         const interestNames = interestIds.map(id => {
                           const tag = findTagById(interestList, id)
-                          return tag ? resolveTagName(tag, String(id)) : String(id)
+                          return tag ? resolveTagName(tag, String(id), previewLang) : String(id)
                         })
 
                         // Normalize hero URL
@@ -1509,14 +2171,20 @@ export default function PublishQueue() {
                         return (
                           <div>
                             {/* Hero Image */}
-                            <div style={{ marginBottom: 20, borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
-                              <img
-                                src={displayHeroUrl || '/assets/generated/hero_placeholder.svg'}
-                                alt="Hero"
-                                style={{ width: '100%', height: 220, objectFit: 'cover', display: 'block' }}
-                                onError={(e) => { try { e.currentTarget.src = '/assets/generated/hero_placeholder.svg' } catch (err) {} }}
-                              />
-                            </div>
+                            {(() => {
+                              const isGenerated = (d.HeroImageSource === 'generated' || a.HeroImageSource === 'generated')
+                              const heroHeight = isGenerated ? 360 : 300
+                              return (
+                                <div style={{ marginBottom: 20, borderRadius: 12, overflow: 'hidden', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+                                  <img
+                                    src={displayHeroUrl || '/assets/generated/hero_placeholder.svg'}
+                                    alt="Hero"
+                                    style={{ width: '100%', height: heroHeight, objectFit: 'cover', display: 'block' }}
+                                    onError={(e) => { try { e.currentTarget.src = '/assets/generated/hero_placeholder.svg' } catch (err) {} }}
+                                  />
+                                </div>
+                              )
+                            })()}
 
                             {/* Tags Section */}
                             <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -1550,22 +2218,19 @@ export default function PublishQueue() {
 
                             {/* Titles */}
                             <div style={{ marginBottom: 16 }}>
-                              <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Title (English)</div>
-                              <div style={{ fontSize: 18, fontWeight: 700, color: '#222', lineHeight: 1.4 }}>{titleEN || '—'}</div>
-                            </div>
-                            {titleZH && (
-                              <div style={{ marginBottom: 16 }}>
-                                <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Title (中文)</div>
-                                <div style={{ fontSize: 16, fontWeight: 600, color: '#333', lineHeight: 1.4 }}>{titleZH}</div>
+                              <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 6 }}>Title</div>
+                              <div style={{ fontSize: 18, fontWeight: 700, color: '#222', lineHeight: 1.4 }}>
+                                {previewLang === 'EN' ? (titleEN || '—') : (titleZH || '—')}
                               </div>
-                            )}
+                            </div>
 
                             {/* Summaries */}
                             {(summaryEN || summaryZH) && (
                               <div style={{ marginBottom: 16, padding: 16, background: '#f9f9f9', borderRadius: 10, borderLeft: '4px solid #BA0006' }}>
                                 <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Summary</div>
-                                {summaryEN && <div style={{ fontSize: 14, color: '#444', lineHeight: 1.6, marginBottom: summaryZH ? 12 : 0 }}>{summaryEN}</div>}
-                                {summaryZH && <div style={{ fontSize: 14, color: '#666', lineHeight: 1.6 }}>{summaryZH}</div>}
+                                <div style={{ fontSize: 14, color: '#444', lineHeight: 1.6 }}>
+                                  {previewLang === 'EN' ? (summaryEN || '—') : (summaryZH || '—')}
+                                </div>
                               </div>
                             )}
 
@@ -1573,34 +2238,16 @@ export default function PublishQueue() {
                             <div style={{ marginBottom: 8 }}>
                               <div style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Full Content</div>
                               <div style={{ 
-                                display: 'grid', 
-                                gridTemplateColumns: contentZH ? '1fr 1fr' : '1fr', 
-                                gap: 16 
+                                padding: 16, 
+                                background: '#fafafa', 
+                                borderRadius: 10, 
+                                maxHeight: 400, 
+                                overflow: 'auto',
+                                border: '1px solid #eee'
                               }}>
-                                <div style={{ 
-                                  padding: 16, 
-                                  background: '#fafafa', 
-                                  borderRadius: 10, 
-                                  maxHeight: 300, 
-                                  overflow: 'auto',
-                                  border: '1px solid #eee'
-                                }}>
-                                  <div style={{ fontSize: 10, color: '#aaa', marginBottom: 8, fontWeight: 600 }}>EN</div>
-                                  <div style={{ fontSize: 13, color: '#333', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{contentEN || '—'}</div>
+                                <div style={{ fontSize: 13, color: '#333', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                                  {previewLang === 'EN' ? (contentEN || '—') : (contentZH || '—')}
                                 </div>
-                                {contentZH && (
-                                  <div style={{ 
-                                    padding: 16, 
-                                    background: '#fafafa', 
-                                    borderRadius: 10, 
-                                    maxHeight: 300, 
-                                    overflow: 'auto',
-                                    border: '1px solid #eee'
-                                  }}>
-                                    <div style={{ fontSize: 10, color: '#aaa', marginBottom: 8, fontWeight: 600 }}>中文</div>
-                                    <div style={{ fontSize: 13, color: '#333', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{contentZH}</div>
-                                  </div>
-                                )}
                               </div>
                             </div>
                           </div>
@@ -1638,7 +2285,7 @@ export default function PublishQueue() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                       <div style={{ fontSize: 18, fontWeight: 700 }}>{quickModalAction === 'schedule' ? 'Quick Schedule' : 'Quick Publish'}</div>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        {quickModalAction === 'schedule' && <input type="datetime-local" value={modalScheduledAt} onChange={e => setModalScheduledAt(e.target.value)} style={{ padding: 8, borderRadius: 6, border: '1px solid #e6e6e6' }} />}
+                        {quickModalAction === 'schedule' && <input type="datetime-local" min={(() => { const now = new Date(); now.setSeconds(0, 0); return now.toISOString().slice(0, 16) })()} value={modalScheduledAt} onChange={e => setModalScheduledAt(e.target.value)} style={{ padding: 8, borderRadius: 6, border: '1px solid #e6e6e6' }} />}
                         <button onClick={() => setQuickModalOpen(false)} style={{ padding: '8px 12px', borderRadius: 6 }}>Close</button>
                       </div>
                     </div>
@@ -1988,6 +2635,7 @@ export default function PublishQueue() {
                               <li>Assign industry classification to unclassified articles</li>
                               <li>Assign topics of interest tags</li>
                               <li>Generate hero images for articles without one</li>
+                              <li>Clean title characters like |, ~, -, &lt;, &gt;, *</li>
                             </ul>
                           </div>
                         </div>
@@ -2098,6 +2746,287 @@ export default function PublishQueue() {
                   </div>
                 </div>
               )}
+
+              {/* Quick Publish Modal */}
+              {quickPublishModalOpen && (
+                <div
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    background: 'rgba(0,0,0,0.6)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 3000,
+                    backdropFilter: 'blur(4px)'
+                  }}
+                  onClick={() => !quickPublishProcessing && setQuickPublishModalOpen(false)}
+                >
+                  <div
+                    style={{
+                      width: '90%',
+                      maxWidth: 700,
+                      maxHeight: '90vh',
+                      overflow: 'hidden',
+                      background: '#fff',
+                      borderRadius: 16,
+                      boxShadow: '0 25px 80px rgba(0,0,0,0.3)',
+                      display: 'flex',
+                      flexDirection: 'column'
+                    }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    {/* Modal Header */}
+                    <div style={{
+                      padding: '20px 24px',
+                      borderBottom: '1px solid #f0f0f0',
+                      background: 'linear-gradient(135deg, #1e7a3a 0%, #166230 100%)',
+                      color: 'white'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                            <span style={{ fontSize: 24 }}>📤</span>
+                            <span style={{ fontWeight: 700, fontSize: 20 }}>
+                              {activeTab === 'unpublished' ? 'Quick Re-publish Articles' : 'Quick Publish Articles'}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 13, opacity: 0.9 }}>
+                            Publish {quickPublishArticleList.length} article{quickPublishArticleList.length !== 1 ? 's' : ''} with AI-powered classification and hero images
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => !quickPublishProcessing && setQuickPublishModalOpen(false)}
+                          disabled={quickPublishProcessing}
+                          style={{
+                            background: 'rgba(255,255,255,0.2)',
+                            border: 'none',
+                            color: 'white',
+                            width: 36,
+                            height: 36,
+                            borderRadius: '50%',
+                            fontSize: 18,
+                            cursor: quickPublishProcessing ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            opacity: quickPublishProcessing ? 0.5 : 1
+                          }}
+                        >✕</button>
+                      </div>
+                    </div>
+
+                    {/* Modal Body */}
+                    <div style={{ flex: 1, overflow: 'auto', padding: 0 }}>
+                      {/* Article List */}
+                      <div style={{ padding: '16px 24px', maxHeight: 360, overflow: 'auto' }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: '#666', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 12 }}>
+                          Selected Articles
+                        </div>
+                        {quickPublishArticleList.length === 0 ? (
+                          <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>No articles selected</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {quickPublishArticleList.map((article) => (
+                              <div
+                                key={article.id}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 12,
+                                  padding: 12,
+                                  background: '#f9f9f9',
+                                  borderRadius: 10,
+                                  border: '1px solid #eee'
+                                }}
+                              >
+                                <div style={{
+                                  width: 64,
+                                  height: 48,
+                                  borderRadius: 6,
+                                  overflow: 'hidden',
+                                  background: '#e0e0e0',
+                                  flexShrink: 0,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}>
+                                  <img
+                                    src={article.heroUrl || '/assets/generated/hero_placeholder.svg'}
+                                    alt="Hero"
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                    onError={(e) => {
+                                      try { e.currentTarget.src = '/assets/generated/hero_placeholder.svg' } catch (err) { /* noop */ }
+                                    }}
+                                  />
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{
+                                    fontWeight: 600,
+                                    fontSize: 13,
+                                    color: '#333',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    marginBottom: 4
+                                  }}>
+                                    {article.title}
+                                  </div>
+                                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                    {article.industryName && (
+                                      <span style={{ padding: '2px 8px', borderRadius: 10, background: '#BA0006', color: 'white', fontSize: 10, fontWeight: 500 }}>
+                                        {article.industryName}
+                                      </span>
+                                    )}
+                                    {article.interestNames.slice(0, 2).map((name, idx) => (
+                                      <span key={idx} style={{ padding: '2px 8px', borderRadius: 10, background: '#FFF5F5', color: '#BA0006', fontSize: 10, fontWeight: 500, border: '1px solid #FFDBDB' }}>
+                                        {name}
+                                      </span>
+                                    ))}
+                                    {article.interestNames.length > 2 && (
+                                      <span style={{ padding: '2px 6px', fontSize: 10, color: '#999' }}>+{article.interestNames.length - 2}</span>
+                                    )}
+                                    {!article.industryName && article.interestNames.length === 0 && (
+                                      <span style={{ padding: '2px 8px', borderRadius: 10, background: '#E8F5E9', color: '#1b5e20', fontSize: 10, fontWeight: 500 }}>
+                                        🤖 AI will classify
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => removeFromQuickPublish(article.id)}
+                                  disabled={quickPublishProcessing}
+                                  style={{
+                                    width: 32,
+                                    height: 32,
+                                    borderRadius: 6,
+                                    border: '1px solid #ffcdd2',
+                                    background: '#fff5f5',
+                                    color: '#d32f2f',
+                                    cursor: quickPublishProcessing ? 'not-allowed' : 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 14,
+                                    fontWeight: 600,
+                                    opacity: quickPublishProcessing ? 0.5 : 1
+                                  }}
+                                  title="Remove from selection"
+                                >✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* AI Info Box */}
+                      <div style={{ padding: '16px 24px', borderTop: '1px solid #f0f0f0' }}>
+                        <div style={{
+                          background: '#E8F5E9',
+                          border: '1px solid #A5D6A7',
+                          borderRadius: 10,
+                          padding: 14,
+                          display: 'flex',
+                          gap: 12,
+                          alignItems: 'flex-start'
+                        }}>
+                          <span style={{ fontSize: 20 }}>🤖</span>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: '#1b5e20', marginBottom: 4 }}>
+                              AI will automatically:
+                            </div>
+                            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: '#2e7d32', lineHeight: 1.8 }}>
+                              <li>Analyze each article's Chinese full content</li>
+                              <li>Assign industry classification to unclassified articles</li>
+                              <li>Assign topics of interest tags</li>
+                              <li>Generate hero images for articles without one</li>
+                              <li>Clean title characters like |, ~, -, &lt;, &gt;, *</li>
+                            </ul>
+                            <div style={{ fontSize: 12, color: '#388e3c', marginTop: 8, fontWeight: 500 }}>
+                              After processing, articles will be published and appear under <strong>Published</strong>.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Progress */}
+                      {quickPublishProcessing && (
+                        <div style={{ padding: '0 24px 16px' }}>
+                          <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 14, border: '1px solid #e0e0e0' }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#666', marginBottom: 8 }}>
+                              {quickPublishProgress.status || 'Processing...'}
+                            </div>
+                            <div style={{ height: 8, background: '#e0e0e0', borderRadius: 4, overflow: 'hidden' }}>
+                              <div style={{
+                                height: '100%',
+                                background: 'linear-gradient(90deg, #1e7a3a, #166230)',
+                                borderRadius: 4,
+                                width: `${quickPublishProgress.total > 0 ? (quickPublishProgress.current / quickPublishProgress.total) * 100 : 60}%`,
+                                transition: 'width 0.3s ease'
+                              }} />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Modal Footer */}
+                    <div style={{
+                      padding: '16px 24px',
+                      borderTop: '1px solid #f0f0f0',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      background: '#fafafa'
+                    }}>
+                      <div style={{ fontSize: 12, color: '#666' }}>
+                        {quickPublishArticleList.length} article{quickPublishArticleList.length !== 1 ? 's' : ''} selected
+                      </div>
+                      <div style={{ display: 'flex', gap: 10 }}>
+                        <button
+                          onClick={() => setQuickPublishModalOpen(false)}
+                          disabled={quickPublishProcessing}
+                          style={{
+                            padding: '10px 20px',
+                            borderRadius: 8,
+                            background: '#f5f5f5',
+                            color: '#666',
+                            border: 'none',
+                            fontWeight: 600,
+                            cursor: quickPublishProcessing ? 'not-allowed' : 'pointer',
+                            opacity: quickPublishProcessing ? 0.5 : 1
+                          }}
+                        >Cancel</button>
+                        <button
+                          onClick={submitQuickPublish}
+                          disabled={quickPublishProcessing || quickPublishArticleList.length === 0}
+                          style={{
+                            padding: '10px 24px',
+                            borderRadius: 8,
+                            background: (quickPublishProcessing || quickPublishArticleList.length === 0) ? '#ccc' : 'linear-gradient(135deg, #1e7a3a 0%, #166230 100%)',
+                            color: 'white',
+                            border: 'none',
+                            fontWeight: 600,
+                            cursor: (quickPublishProcessing || quickPublishArticleList.length === 0) ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8
+                          }}
+                        >
+                          {quickPublishProcessing ? (
+                            <>
+                              <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+                              Processing...
+                            </>
+                          ) : (
+                            <><span>📤</span> {activeTab === 'unpublished' ? 'Confirm Re-publish' : 'Confirm Publish'}</>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
                 <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16, gap: 12 }}>
@@ -2119,6 +3048,70 @@ export default function PublishQueue() {
           </div>
         </div>
       </div>
+
+      {/* Toast Notification */}
+      {toast && (
+        <div style={{
+          position: 'fixed',
+          bottom: 30,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          background: toast.type === 'error' ? '#d32f2f' : toast.type === 'info' ? '#1976d2' : '#2e7d32',
+          color: 'white',
+          padding: '12px 20px',
+          borderRadius: 8,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          zIndex: 9999,
+          animation: 'slideUp 0.3s ease-out',
+          maxWidth: '90%'
+        }}>
+          <span style={{ flex: 1 }}>{toast.message}</span>
+          {toast.action && (
+            <button
+              onClick={() => {
+                toast.action.callback()
+                setToast(null)
+              }}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                color: 'white',
+                border: '1px solid rgba(255,255,255,0.4)',
+                padding: '6px 14px',
+                borderRadius: 6,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseEnter={(e) => e.target.style.background = 'rgba(255,255,255,0.3)'}
+              onMouseLeave={(e) => e.target.style.background = 'rgba(255,255,255,0.2)'}
+            >
+              {toast.action.label}
+            </button>
+          )}
+          <button
+            onClick={() => setToast(null)}
+            style={{
+              background: 'transparent',
+              color: 'white',
+              border: 'none',
+              fontSize: 18,
+              cursor: 'pointer',
+              padding: '0 4px',
+              lineHeight: 1,
+              opacity: 0.8
+            }}
+            onMouseEnter={(e) => e.target.style.opacity = '1'}
+            onMouseLeave={(e) => e.target.style.opacity = '0.8'}
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   )
 }

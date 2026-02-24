@@ -100,11 +100,31 @@ export default function SelectTopicsOfInterest({ onComplete }) {
     try {
       const res = await apiFetch('/api/InterestTags')
       console.log('[loadTopics] raw response:', res)
-      const list = res?.data || res || []
-      const mapped = Array.isArray(list) ? list.map(t => ({
-        id: t.interestTagId ?? t.InterestTagId ?? t.id,
-        name: t.name ?? t.Name
-      })) : []
+      console.log('[loadTopics] response type:', typeof res)
+      console.log('[loadTopics] response keys:', Object.keys(res || {}))
+      console.log('[loadTopics] res.data:', res?.data)
+      console.log('[loadTopics] res.data is array:', Array.isArray(res?.data))
+      console.log('[loadTopics] res is array:', Array.isArray(res))
+      
+      let list = []
+      if (res?.data && Array.isArray(res.data)) {
+        list = res.data
+      } else if (Array.isArray(res)) {
+        list = res
+      }
+      
+      console.log('[loadTopics] extracted list:', list)
+      console.log('[loadTopics] list length:', list.length)
+      
+      const mapped = list.map(t => {
+        const topicId = t.interestTagId ?? t.InterestTagId ?? t.id
+        const topicNameEN = t.nameEN
+        const topicNameZH = t.nameZH
+        console.log('[loadTopics] mapping topic:', { id: topicId, nameEN: topicNameEN, nameZH: topicNameZH, original: t })
+        return { id: topicId, nameEN: topicNameEN, nameZH: topicNameZH }
+      })
+      
+      console.log('[loadTopics] mapped topics:', mapped)
       setTopics(mapped)
     } catch (e) {
       console.error('[loadTopics] error:', e)
@@ -167,7 +187,7 @@ export default function SelectTopicsOfInterest({ onComplete }) {
   }
 
   const handleSkip = () => {
-    navigate('/landing')
+    navigate('/member/articles')
   }
 
   return (
@@ -271,7 +291,7 @@ export default function SelectTopicsOfInterest({ onComplete }) {
                     position: 'relative'
                   }}
                 >
-                  {topic.name}
+                  {language === 'Chinese' ? topic.nameZH : topic.nameEN}
                 </button>
               ))}
             </div>

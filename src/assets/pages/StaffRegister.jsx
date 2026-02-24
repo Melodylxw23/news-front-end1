@@ -8,6 +8,7 @@ function StaffRegister() {
     Email: '',
     Password: '',
     ConfirmPassword: '',
+    WeChatWorkId: '',
     SecretCode: ''
   })
   const [message, setMessage] = useState(null)
@@ -29,7 +30,7 @@ function StaffRegister() {
       if (!res.ok) setMessage(text || 'Registration failed')
       else {
         setMessage('Staff registration successful.')
-        setForm({ Name: '', Email: '', Password: '', ConfirmPassword: '', SecretCode: '' })
+        setForm({ Name: '', Email: '', Password: '', ConfirmPassword: '', WeChatWorkId: '', SecretCode: '' })
       }
     } catch (err) {
       setMessage('Network error')
@@ -47,6 +48,9 @@ function StaffRegister() {
 
         <label>Email</label>
         <input type="email" name="Email" value={form.Email} onChange={handleChange} required autoComplete="email" />
+
+        <label>WeChat / Work ID</label>
+        <input name="WeChatWorkId" value={form.WeChatWorkId} onChange={handleChange} />
 
         <label>Password</label>
         <input type="password" name="Password" value={form.Password} onChange={handleChange} required autoComplete="new-password" />

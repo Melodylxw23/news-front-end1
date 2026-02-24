@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react'
 import AuthLayout from './AuthLayout'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 function Register() {
+  const navigate = useNavigate()
   const [form, setForm] = useState({
     CompanyName: '',
     ContactPerson: '',
     Email: '',
+    WeChatWorkId: '',
     Country: '',
     IndustryTagId: '', // Add industry field
     PreferredLanguage: '',
@@ -25,8 +27,11 @@ function Register() {
       try {
         const res = await fetch('/api/IndustryTags')
         if (res.ok) {
-          const data = await res.json()
-          setIndustries(data?.data || [])
+          const response = await res.json()
+          console.log('[Register] Industry API response:', response)
+          const industryList = response?.data || []
+          console.log('[Register] Parsed industry list:', industryList)
+          setIndustries(industryList)
         }
       } catch (err) {
         console.error('Error fetching industries:', err)
@@ -45,6 +50,11 @@ function Register() {
     setMessage(null)
     setLoading(true)
     try {
+      // Store the selected industry in localStorage before registration
+      if (form.IndustryTagId) {
+        localStorage.setItem('selectedIndustryTagId', form.IndustryTagId)
+      }
+
       const res = await fetch('/api/UserControllers/register-member', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -55,19 +65,16 @@ function Register() {
       if (!res.ok) {
         setMessage(text || 'Registration failed')
       } else {
-        setMessage('Registration successful. You can now log in.')
-        setForm({
-          CompanyName: '',
-          ContactPerson: '',
-          Email: '',
-          Country: '',
-          IndustryTagId: '',
-          PreferredLanguage: '',
-          PreferredChannel: '',
-          MembershipType: '',
-          Password: '',
-          ConfirmPassword: ''
-        })
+        // Set flag to indicate preferences setup is needed
+        localStorage.setItem('needsPreferencesSetup', 'true')
+        localStorage.setItem('registeredEmail', form.Email)
+        
+        // Redirect to login page
+        setTimeout(() => {
+          navigate('/MemberLogin', { 
+            state: { message: 'Registration successful. Please log in with your new account.' } 
+          })
+        }, 1000)
       }
     } catch (err) {
       setMessage('Network error')
@@ -90,6 +97,9 @@ function Register() {
           <label>Email</label>
           <input type="email" name="Email" value={form.Email} onChange={handleChange} required autoComplete="email" />
 
+          <label>WeChat / Work ID</label>
+          <input name="WeChatWorkId" value={form.WeChatWorkId} onChange={handleChange} />
+
           <label>Country</label>
           <input name="Country" value={form.Country} onChange={handleChange} />
 
@@ -97,8 +107,8 @@ function Register() {
           <select name="IndustryTagId" value={form.IndustryTagId} onChange={handleChange} required>
             <option value="">Select Industry</option>
             {industries.map(industry => (
-              <option key={industry.industryTagId} value={industry.industryTagId}>
-                {industry.name}
+              <option key={industry.industryTagId || industry.IndustryTagId} value={industry.industryTagId || industry.IndustryTagId}>
+                {industry.nameEN || industry.NameEN}
               </option>
             ))}
           </select>

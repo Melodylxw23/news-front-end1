@@ -32,7 +32,30 @@ export default function NotificationPreferences() {
   // Load existing preferences on mount
   useEffect(() => {
     const loadPreferences = async () => {
+      const parseChannels = (channelsString) => {
+        const existing = (channelsString || '').split(',').map(c => c.trim().toLowerCase())
+        return {
+          whatsapp: existing.includes('whatsapp'),
+          email: existing.includes('email'),
+          sms: existing.includes('sms'),
+          inApp: existing.includes('inapp') || existing.includes('in-app')
+        }
+      }
+
       try {
+        // 1) Try pending preferences saved in localStorage (onboarding/flow)
+        try {
+          const pending = JSON.parse(localStorage.getItem('pendingNotificationPreferences') || 'null')
+          const pendingChannels = pending?.NotificationChannels || pending?.notificationChannels
+          if (pendingChannels) {
+            setChannels(parseChannels(pendingChannels))
+            return
+          }
+        } catch (e) {
+          console.warn('[NotificationPreferences] Could not parse pending preferences', e)
+        }
+
+        // 2) Fallback: fetch from server
         const response = await apiFetch('/api/UserControllers/me')
         const userData = response?.data || response
         
@@ -48,15 +71,7 @@ export default function NotificationPreferences() {
         console.log('[NotificationPreferences] Channels string:', channelsString)
         
         if (channelsString) {
-          const existingChannels = channelsString.split(',').map(ch => ch.trim().toLowerCase())
-          console.log('[NotificationPreferences] Parsed channels array:', existingChannels)
-          
-          const channelsState = {
-            whatsapp: existingChannels.includes('whatsapp'),
-            email: existingChannels.includes('email'),
-            sms: existingChannels.includes('sms'),
-            inApp: existingChannels.includes('inapp') || existingChannels.includes('in-app')
-          }
+          const channelsState = parseChannels(channelsString)
           console.log('[NotificationPreferences] Pre-populating channels:', channelsState)
           setChannels(channelsState)
         } else {
@@ -105,7 +120,7 @@ export default function NotificationPreferences() {
   }
 
   const handleSkip = () => {
-    navigate('/landing')
+    navigate('/member/articles')
   }
 
   const handleBack = () => {

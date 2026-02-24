@@ -18,11 +18,11 @@ const apiFetch = async (path, opts = {}) => {
 export default function MemberProfile() {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [aiSuggestions, setAiSuggestions] = useState([])
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
-  const [showSuggestions, setShowSuggestions] = useState(true)
+  // AI recommendations removed per request
+  const [pendingInterests, setPendingInterests] = useState([])
+  const [selectedIndustry, setSelectedIndustry] = useState(null)
   
-  // Interest Decay state
+  // Interest Decay state (unused when AI removed)
   const [decayRecommendations, setDecayRecommendations] = useState([])
   const [loadingDecay, setLoadingDecay] = useState(false)
   const [showDecay, setShowDecay] = useState(true)
@@ -30,10 +30,74 @@ export default function MemberProfile() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    // Load industry from localStorage (saved during registration)
+    const loadIndustry = async () => {
+      try {
+        const industryId = localStorage.getItem('selectedIndustryTagId')
+        if (industryId) {
+          // Fetch industry tags to get the name
+          const res = await apiFetch('/api/IndustryTags')
+          const list = res?.data || res || []
+          const found = list.find(ind => 
+            (ind.industryTagId ?? ind.IndustryTagId) == industryId
+          )
+          if (found) {
+            setSelectedIndustry(found.nameEN ?? found.NameEN)
+          }
+        }
+      } catch (err) {
+        console.error('[MemberProfile] Error loading industry:', err)
+      }
+    }
+    
+    loadIndustry()
     loadProfile()
-    loadAISuggestions()
-    loadInterestDecayRecommendations()
+    // AI suggestion loading removed
   }, [])
+
+  const parseStoredJson = (key) => {
+    try {
+      const raw = localStorage.getItem(key)
+      return raw ? JSON.parse(raw) : null
+    } catch (e) {
+      console.error(`[MemberProfile] Failed to parse ${key}:`, e)
+      return null
+    }
+  }
+
+  useEffect(() => {
+    const member = profile?.member || profile?.Member
+    const currentInterests = member?.interests || member?.Interests || []
+    if (currentInterests.length > 0) return
+
+    const pending = parseStoredJson('pendingTopicSelections')
+    const pendingIds = pending?.InterestTagIds || []
+    if (!pendingIds.length) return
+
+    let cancelled = false
+    const loadPendingInterests = async () => {
+      try {
+        const res = await apiFetch('/api/InterestTags')
+        const list = res?.data || res || []
+        const nameById = new Map(
+          list.map(t => [
+            t.interestTagId ?? t.InterestTagId,
+            t.nameEN ?? t.NameEN ?? t.name ?? t.Name
+          ])
+        )
+        const mapped = pendingIds.map(id => ({
+          interestTagId: id,
+          name: nameById.get(id) || `Topic ${id}`
+        }))
+        if (!cancelled) setPendingInterests(mapped)
+      } catch (err) {
+        console.error('[MemberProfile] Error loading pending interests:', err)
+      }
+    }
+
+    loadPendingInterests()
+    return () => { cancelled = true }
+  }, [profile])
 
   const loadProfile = async () => {
     setLoading(true)
@@ -49,142 +113,7 @@ export default function MemberProfile() {
     }
   }
 
-  const loadAISuggestions = async () => {
-    setLoadingSuggestions(true)
-    try {
-      const data = await apiFetch('/api/AI/suggest-topics')
-      console.log('[MemberProfile] AI Suggestions Response:', data)
-      
-      // Handle different response formats
-      if (data?.suggestions && Array.isArray(data.suggestions)) {
-        console.log('[MemberProfile] Found suggestions:', data.suggestions)
-        setAiSuggestions(data.suggestions)
-      } else if (data?.data?.suggestions && Array.isArray(data.data.suggestions)) {
-        console.log('[MemberProfile] Found suggestions in data.data:', data.data.suggestions)
-        setAiSuggestions(data.data.suggestions)
-      } else if (Array.isArray(data)) {
-        console.log('[MemberProfile] Response is array:', data)
-        setAiSuggestions(data)
-      } else {
-        console.log('[MemberProfile] No suggestions found or backend not implemented yet')
-        // TEMPORARY: Add mock data for testing if backend not ready
-        setAiSuggestions([
-          {
-            interestTagId: 999,
-            name: 'Environmental Compliance',
-            matchPercentage: 87,
-            reason: 'Based on your reading pattern, you frequently engage with regulatory content'
-          },
-          {
-            interestTagId: 998,
-            name: 'Trade Incentives',
-            matchPercentage: 82,
-            reason: 'Popular among members with similar interests'
-          },
-          {
-            interestTagId: 997,
-            name: 'Logistics Cost Management',
-            matchPercentage: 78,
-            reason: 'You\'ve shown interest in supply chain topics'
-          }
-        ])
-      }
-    } catch (err) {
-      console.error('[MemberProfile] Error loading suggestions:', err)
-      console.log('[MemberProfile] Backend endpoint may not be implemented yet. Using mock data.')
-      // Show mock data if backend not ready
-      setAiSuggestions([
-        {
-          interestTagId: 999,
-          name: 'Environmental Compliance',
-          matchPercentage: 87,
-          reason: 'Based on your reading pattern, you frequently engage with regulatory content'
-        },
-        {
-          interestTagId: 998,
-          name: 'Trade Incentives',
-          matchPercentage: 82,
-          reason: 'Popular among members with similar interests'
-        },
-        {
-          interestTagId: 997,
-          name: 'Logistics Cost Management',
-          matchPercentage: 78,
-          reason: 'You\'ve shown interest in supply chain topics'
-        }
-      ])
-    } finally {
-      setLoadingSuggestions(false)
-    }
-  }
-
-  const handleAddSuggestion = async (suggestion) => {
-    try {
-      const member = profile?.member || profile?.Member
-      if (!member) return
-
-      // If it's a mock suggestion (ID > 900), find the real topic from database
-      let topicId = suggestion.interestTagId
-      if (topicId > 900) {
-        console.log('[MemberProfile] Mock suggestion detected, fetching real topic...')
-        try {
-          const allTopicsRes = await apiFetch('/api/InterestTags')
-          const allTopics = allTopicsRes?.data || allTopicsRes || []
-          const matchingTopic = allTopics.find(t => 
-            (t.name || t.Name)?.toLowerCase() === suggestion.name?.toLowerCase()
-          )
-          
-          if (matchingTopic) {
-            topicId = matchingTopic.interestTagId || matchingTopic.InterestTagId
-            console.log('[MemberProfile] Found matching topic ID:', topicId)
-          } else {
-            alert(`Topic "${suggestion.name}" not found in database. Please add it in Category Management first.`)
-            return
-          }
-        } catch (err) {
-          console.error('[MemberProfile] Error fetching topics:', err)
-          alert('Failed to find topic in database')
-          return
-        }
-      }
-
-      const currentInterests = member.interests || member.Interests || []
-      const currentInterestIds = currentInterests.map(i => i.interestTagId || i.InterestTagId)
-
-      // Check if already added
-      if (currentInterestIds.includes(topicId)) {
-        alert(`"${suggestion.name}" is already in your interests!`)
-        setAiSuggestions(prev => prev.filter(s => s.interestTagId !== suggestion.interestTagId))
-        return
-      }
-
-      const payload = {
-        InterestTagIds: [...currentInterestIds, topicId],
-        PreferredLanguage: member.preferredLanguage || member.PreferredLanguage || 'EN',
-        NotificationChannels: member.notificationChannels || member.NotificationChannels
-      }
-
-      console.log('[MemberProfile] Sending payload:', payload)
-
-      await apiFetch('/api/UserControllers/select-topics', {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      })
-
-      alert(`✅ ${suggestion.name} has been added to your interests!`)
-      setAiSuggestions(prev => prev.filter(s => s.interestTagId !== suggestion.interestTagId))
-      
-      // Reload profile to show updated topics
-      await loadProfile()
-    } catch (err) {
-      console.error('[MemberProfile] Error adding topic:', err)
-      alert('Failed to add topic: ' + err.message)
-    }
-  }
-
-  const handleIgnoreSuggestion = (suggestionId) => {
-    setAiSuggestions(prev => prev.filter(s => s.interestTagId !== suggestionId))
-  }
+  
 
   // Load interest decay recommendations with mock data
   const loadInterestDecayRecommendations = async () => {
@@ -338,9 +267,15 @@ export default function MemberProfile() {
 
   const member = profile.member || profile.Member
   const interests = member?.interests || member?.Interests || []
-  const channels = member?.notificationChannels || member?.NotificationChannels || ''
-  const frequency = member?.notificationFrequency || member?.NotificationFrequency || ''
-  const language = member?.preferredLanguage || member?.PreferredLanguage || 'EN'
+
+  const pendingTopicSelections = parseStoredJson('pendingTopicSelections')
+  const pendingNotificationPreferences = parseStoredJson('pendingNotificationPreferences')
+  const pendingNotificationFrequency = parseStoredJson('pendingNotificationFrequency')
+
+  const displayInterests = interests.length > 0 ? interests : pendingInterests
+  const channels = (member?.notificationChannels || member?.NotificationChannels || pendingNotificationPreferences?.NotificationChannels || '')
+  const frequency = (member?.notificationFrequency || member?.NotificationFrequency || pendingNotificationFrequency?.NotificationFrequency || '')
+  const language = (member?.preferredLanguage || member?.PreferredLanguage || pendingTopicSelections?.PreferredLanguage || 'EN')
 
   // Parse notification channels
   const channelList = channels ? channels.split(',').map(c => c.trim()) : []
@@ -363,7 +298,48 @@ export default function MemberProfile() {
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '40px 20px' }}>
       {/* Header */}
       <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 32, fontWeight: 700, color: '#2D3748', margin: 0 }}>My Profile</h1>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ width: 84, height: 84, borderRadius: 12, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E2E8F0', overflow: 'hidden' }}>
+              {profile?.avatarUrl ? (
+                <img
+                  src={profile.avatarUrl}
+                  alt={profile?.name || (profile?.member || profile?.Member)?.contactPerson || 'Profile'}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                />
+              ) : (
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <rect width="24" height="24" rx="4" fill="#F1F5F9" />
+                  <path d="M12 12c1.933 0 3.5-1.567 3.5-3.5S13.933 5 12 5 8.5 6.567 8.5 8.5 10.067 12 12 12z" fill="#4A5568" />
+                  <path d="M4 19c0-2.761 3.589-5 8-5s8 2.239 8 5v1H4v-1z" fill="#4A5568" />
+                </svg>
+              )}
+            </div>
+
+            <h1 style={{ fontSize: 36, fontWeight: 800, color: '#2D3748', margin: 0 }}>{profile?.name || (profile?.member || profile?.Member)?.contactPerson || (profile?.member || profile?.Member)?.userName || 'Member'}</h1>
+          </div>
+
+          <div>
+            <button
+              onClick={() => navigate('/member/saved-articles')}
+              style={{
+                padding: '10px 14px',
+                background: '#b91c1c',
+                border: 'none',
+                color: 'white',
+                borderRadius: 8,
+                cursor: 'pointer',
+                fontSize: 14,
+                fontWeight: 700,
+                boxShadow: '0 2px 8px rgba(185,28,28,0.2)'
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.filter = 'brightness(1.03)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.filter = 'none'; }}
+            >
+              📌 View Saved Articles
+            </button>
+          </div>
+        </div>
       </div>
 
       <div style={{ height: 1, background: '#E2E8F0', marginBottom: 32 }} />
@@ -387,6 +363,18 @@ export default function MemberProfile() {
           <div style={{ display: 'flex' }}>
             <div style={{ width: 180, fontWeight: 600, color: '#4A5568' }}>Country:</div>
             <div style={{ color: '#2D3748' }}>{member?.country || '-'}</div>
+          </div>
+          <div style={{ display: 'flex' }}>
+            <div style={{ width: 180, fontWeight: 600, color: '#4A5568' }}>Industry:</div>
+            <div style={{ color: '#2D3748' }}>
+              {(() => {
+                const industryTags = member?.industryTags || member?.IndustryTags || []
+                if (Array.isArray(industryTags) && industryTags.length > 0) {
+                  return industryTags.map(tag => tag.nameEN || tag.NameEN || tag.name || tag.Name).filter(Boolean).join(', ')
+                }
+                return selectedIndustry || member?.industry || member?.Industry || '-'
+              })()}
+            </div>
           </div>
           <div style={{ display: 'flex' }}>
             <div style={{ width: 180, fontWeight: 600, color: '#4A5568' }}>Membership Type:</div>
@@ -438,8 +426,8 @@ export default function MemberProfile() {
             Topics of Interest
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {interests.length > 0 ? (
-              interests.map((topic, idx) => (
+            {displayInterests.length > 0 ? (
+              displayInterests.map((topic, idx) => (
                 <span
                   key={idx}
                   style={{
@@ -452,7 +440,7 @@ export default function MemberProfile() {
                     border: '1px solid #FC8181'
                   }}
                 >
-                  {topic.name || topic.Name}
+                  {topic.name || topic.Name || topic.nameEN || topic.NameEN}
                 </span>
               ))
             ) : (
@@ -524,333 +512,9 @@ export default function MemberProfile() {
         </div>
       </div>
 
-      {/* AI Recommendations Section */}
-      {(showSuggestions && (aiSuggestions.length > 0 || decayRecommendations.length > 0)) && (
-        <div style={{
-          background: 'linear-gradient(135deg, #c92b2b 0%, #8b1f1f 100%)',
-          padding: 24,
-          borderRadius: 12,
-          boxShadow: '0 4px 12px rgba(201, 43, 43, 0.3)',
-          marginBottom: 24,
-          position: 'relative'
-        }}>
-          {/* Close button */}
-          <button
-            onClick={() => setShowSuggestions(false)}
-            style={{
-              position: 'absolute',
-              top: 12,
-              right: 12,
-              background: 'rgba(255, 255, 255, 0.2)',
-              border: 'none',
-              color: 'white',
-              fontSize: 18,
-              cursor: 'pointer',
-              borderRadius: 6,
-              padding: '4px 12px',
-              fontWeight: 600
-            }}
-          >
-            ✕
-          </button>
+      
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-            <span style={{ fontSize: 28 }}>🤖</span>
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: 'white', margin: 0 }}>
-              AI-Powered Recommendations
-            </h2>
-          </div>
-
-          <p style={{ fontSize: 14, color: 'rgba(255, 255, 255, 0.9)', marginBottom: 20, lineHeight: 1.6 }}>
-            Our AI analyzes your behavior to keep your profile fresh and relevant:
-          </p>
-
-          {/* Interest Health Check Section */}
-          {decayRecommendations.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <span style={{ fontSize: 20 }}>⏰</span>
-                <h3 style={{ fontSize: 18, fontWeight: 700, color: 'white', margin: 0 }}>
-                  Interest Health Check
-                </h3>
-              </div>
-              <p style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)', marginBottom: 16, lineHeight: 1.5 }}>
-                Topics you haven't engaged with recently - consider replacing them:
-              </p>
-
-              {loadingDecay ? (
-                <div style={{ textAlign: 'center', padding: 20, color: 'white' }}>
-                  <div style={{ fontSize: 16 }}>⏳ Analyzing your engagement patterns...</div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 24 }}>
-                  {decayRecommendations.map((rec, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.15)',
-                        backdropFilter: 'blur(10px)',
-                        padding: 20,
-                        borderRadius: 10,
-                        border: '1px solid rgba(255, 255, 255, 0.3)'
-                      }}
-                    >
-                      {/* Low engagement topic */}
-                      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid rgba(255,255,255,0.2)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                          <span style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>
-                            📉 {rec.lowEngagementTopic.name}
-                          </span>
-                          <span style={{
-                            padding: '2px 10px',
-                            background: 'rgba(239, 68, 68, 0.8)',
-                            color: 'white',
-                            borderRadius: 12,
-                            fontSize: 11,
-                            fontWeight: 600
-                          }}>
-                            Low Activity
-                          </span>
-                        </div>
-                        <div style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)' }}>
-                          ⚠️ Last engaged {rec.lowEngagementTopic.daysSinceLastEngagement} days ago 
-                          ({rec.lowEngagementTopic.totalEngagements} total interactions)
-                        </div>
-                      </div>
-
-                      {/* Replacement suggestion */}
-                      <div style={{ marginBottom: 16 }}>
-                        <div style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.9)', marginBottom: 10, fontWeight: 600 }}>
-                          💡 Suggested Replacement:
-                        </div>
-                        <div style={{ background: 'rgba(16, 185, 129, 0.15)', padding: 12, borderRadius: 8, border: '1px solid rgba(16, 185, 129, 0.3)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                            <span style={{ fontSize: 15, fontWeight: 700, color: 'white' }}>
-                              📈 {rec.replacementSuggestion.name}
-                            </span>
-                            <span style={{
-                              padding: '2px 8px',
-                              background: 'rgba(16, 185, 129, 0.8)',
-                              color: 'white',
-                              borderRadius: 12,
-                              fontSize: 11,
-                              fontWeight: 600
-                            }}>
-                              {rec.replacementSuggestion.matchPercentage}% match
-                            </span>
-                          </div>
-                          <div style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)' }}>
-                            ✨ {rec.replacementSuggestion.reason}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Action buttons */}
-                      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-                        <button
-                          onClick={() => handleReplaceInterest(rec)}
-                          style={{
-                            padding: '8px 20px',
-                            background: 'white',
-                            color: '#c92b2b',
-                            border: 'none',
-                            borderRadius: 6,
-                            fontSize: 14,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.2s'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.target.style.background = '#f7f7f7'
-                            e.target.style.transform = 'scale(1.05)'
-                          }}
-                          onMouseLeave={(e) => {
-                            e.target.style.background = 'white'
-                            e.target.style.transform = 'scale(1)'
-                          }}
-                        >
-                          🔄 Replace Topic
-                        </button>
-                        <button
-                          onClick={() => handleKeepInterest(rec)}
-                          style={{
-                            padding: '8px 20px',
-                            background: 'rgba(255, 255, 255, 0.2)',
-                            color: 'white',
-                            border: '1px solid rgba(255, 255, 255, 0.4)',
-                            borderRadius: 6,
-                            fontSize: 14,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            transition: 'all 0.2s'
-                          }}
-                          onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.3)'}
-                          onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
-                        >
-                          Keep Current
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* New Topic Suggestions Section */}
-          {aiSuggestions.length > 0 && (
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <span style={{ fontSize: 20 }}>💡</span>
-                <h3 style={{ fontSize: 18, fontWeight: 700, color: 'white', margin: 0 }}>
-                  New Topics You Might Like
-                </h3>
-              </div>
-              <p style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)', marginBottom: 16, lineHeight: 1.5 }}>
-                Based on your reading behavior, expand your interests:
-              </p>
-
-              {loadingSuggestions ? (
-                <div style={{ textAlign: 'center', padding: 20, color: 'white' }}>
-                  <div style={{ fontSize: 16 }}>⏳ Analyzing your preferences...</div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {aiSuggestions.slice(0, 5).map((suggestion, idx) => (
-                    <div
-                      key={idx}
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.15)',
-                        backdropFilter: 'blur(10px)',
-                        padding: 16,
-                        borderRadius: 10,
-                        border: '1px solid rgba(255, 255, 255, 0.2)',
-                        transition: 'all 0.3s'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.25)'
-                        e.currentTarget.style.transform = 'translateY(-2px)'
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'
-                        e.currentTarget.style.transform = 'translateY(0)'
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                            <span style={{ fontSize: 16, fontWeight: 700, color: 'white' }}>
-                              {suggestion.name}
-                            </span>
-                            <span style={{
-                              padding: '2px 8px',
-                              background: '#f6ad55',
-                              color: 'white',
-                              borderRadius: 12,
-                              fontSize: 11,
-                              fontWeight: 600
-                            }}>
-                              {suggestion.matchPercentage}% match
-                            </span>
-                          </div>
-                          <div style={{ fontSize: 13, color: 'rgba(255, 255, 255, 0.85)', lineHeight: 1.5 }}>
-                            💡 {suggestion.reason}
-                          </div>
-                        </div>
-
-                        <div style={{ display: 'flex', gap: 8, marginLeft: 16 }}>
-                          <button
-                            onClick={() => handleAddSuggestion(suggestion)}
-                            style={{
-                              padding: '6px 16px',
-                              background: 'white',
-                              color: '#c92b2b',
-                              border: 'none',
-                              borderRadius: 6,
-                              fontSize: 13,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              transition: 'all 0.2s'
-                            }}
-                            onMouseEnter={(e) => {
-                              e.target.style.background = '#f7f7f7'
-                              e.target.style.transform = 'scale(1.05)'
-                            }}
-                            onMouseLeave={(e) => {
-                              e.target.style.background = 'white'
-                              e.target.style.transform = 'scale(1)'
-                            }}
-                          >
-                            ✓ Add
-                          </button>
-                          <button
-                            onClick={() => handleIgnoreSuggestion(suggestion.interestTagId)}
-                            style={{
-                              padding: '6px 16px',
-                              background: 'rgba(255, 255, 255, 0.2)',
-                              color: 'white',
-                              border: '1px solid rgba(255, 255, 255, 0.3)',
-                              borderRadius: 6,
-                              fontSize: 13,
-                              fontWeight: 600,
-                              cursor: 'pointer',
-                              transition: 'all 0.2s'
-                            }}
-                            onMouseEnter={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.3)'}
-                            onMouseLeave={(e) => e.target.style.background = 'rgba(255, 255, 255, 0.2)'}
-                          >
-                            Ignore
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {!loadingSuggestions && !loadingDecay && aiSuggestions.length === 0 && decayRecommendations.length === 0 && (
-            <div style={{ textAlign: 'center', padding: 20, color: 'rgba(255, 255, 255, 0.85)', fontSize: 14 }}>
-              📚 Read more articles to get personalized AI recommendations!
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Show dismissed suggestions button */}
-      {!showSuggestions && (aiSuggestions.length > 0 || decayRecommendations.length > 0) && (
-        <div style={{ marginBottom: 24 }}>
-          <button
-            onClick={() => setShowSuggestions(true)}
-            style={{
-              padding: '12px 24px',
-              background: 'linear-gradient(135deg, #c92b2b 0%, #8b1f1f 100%)',
-              border: 'none',
-              color: 'white',
-              borderRadius: 10,
-              cursor: 'pointer',
-              fontSize: 16,
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              boxShadow: '0 4px 12px rgba(201, 43, 43, 0.4)',
-              transition: 'all 0.3s'
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.transform = 'translateY(-2px)'
-              e.target.style.boxShadow = '0 6px 16px rgba(201, 43, 43, 0.5)'
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.transform = 'translateY(0)'
-              e.target.style.boxShadow = '0 4px 12px rgba(201, 43, 43, 0.4)'
-            }}
-          >
-            💡 Show AI Recommendations ({aiSuggestions.length + decayRecommendations.length})
-          </button>
-        </div>
-      )}
+      
     </div>
   )
 }

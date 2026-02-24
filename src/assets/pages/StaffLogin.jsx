@@ -38,11 +38,15 @@ function StaffLogin({ onLoginSuccess }) {
       } else {
         const token = data?.token
         if (token) localStorage.setItem('token', token)
-        
-        // Check if user must change password
-        if (data?.mustChangePassword === true) {
+
+        // If the user just used the reset link, skip forcing another password change
+        const justReset = localStorage.getItem('passwordRecentlyReset') === '1'
+        if (data?.mustChangePassword === true && !justReset) {
           navigate('/set-initial-password')
           return
+        }
+        if (justReset) {
+          try { localStorage.removeItem('passwordRecentlyReset') } catch (e) {}
         }
 
         // Prefer role from token claims if available

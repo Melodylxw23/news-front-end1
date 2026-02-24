@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { sendBroadcast, previewTargetedMembers } from '../../api/broadcast';
 
-const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || 'https://localhost:7191';
 
 // Helper function to get audience label
 const getAudienceLabel = (value) => {
@@ -96,38 +96,58 @@ const normalizeAudience = (raw) => {
 };
 
 // Normalize channels to an array (supports integer enum, single string, comma-separated string, or array)
-// WeChat was removed from backend; treat any legacy values as Email.
+// Backend sends: Email=1, WeChat=2, Both=3, or "All" for both
 const normalizeChannels = (raw) => {
+    console.log('[normalizeChannels] input:', raw, 'type:', typeof raw);
+    
     const normalizeVal = (v) => {
         if (!v && v !== 0) return null;
         
-        // Handle numeric enum values (legacy): treat anything as Email.
+        // Handle numeric enum values: 1=Email, 2=WeChat, 3=Both
         if (typeof v === 'number') {
-            return (v & 1) ? 'Email' : 'Email';
+            if (v === 1) return 'Email';
+            if (v === 2) return 'WeChat';
+            if (v === 3) return null; // 3 means both, shouldn't be in array format
+            return null;
         }
         
         const val = v.trim();
-        if (val === 'All' || val.toLowerCase() === 'all') return 'Email';
-        if (val.toLowerCase() === 'wechat' || val.toLowerCase() === 'sms') return 'Email';
-        return val.toLowerCase() === 'email' ? 'Email' : 'Email';
+        // Special case: "All" means both Email and WeChat
+        if (val === 'All' || val.toLowerCase() === 'all') return null; // We'll handle "All" specially
+        if (val.toLowerCase() === 'sms') return 'WeChat';
+        return val;
     };
 
     // Handle integer enum values from backend
     if (typeof raw === 'number') {
         const channels = [];
         if (raw & 1) channels.push('Email');   // Email = 1 (bit 0)
+        if (raw & 2) channels.push('WeChat');  // WeChat = 2 (bit 1)
+        console.log('[normalizeChannels] from number', raw, '-> channels:', channels);
         return channels.length > 0 ? channels : ['Email'];
+    }
+
+    // Handle "All" string - means both channels
+    if (typeof raw === 'string') {
+        if (raw === 'All' || raw.toLowerCase() === 'all') {
+            console.log('[normalizeChannels] from string "All" -> both channels:', ['Email', 'WeChat']);
+            return ['Email', 'WeChat'];
+        }
     }
 
     if (Array.isArray(raw)) {
         const result = raw.map(normalizeVal).filter(Boolean);
+        console.log('[normalizeChannels] from array:', raw, '-> filtered:', result);
         return result.length > 0 ? result : ['Email'];
     }
     
     if (typeof raw === 'string') {
         const parts = raw.split(',').map((p) => normalizeVal(p)).filter(Boolean);
+        console.log('[normalizeChannels] from string:', raw, '-> parts:', parts);
         if (parts.length > 0) return parts;
     }
+    
+    console.log('[normalizeChannels] returning default: [Email]');
     return ['Email'];
 };
 
@@ -136,8 +156,7 @@ const normalizeChannels = (raw) => {
 const toChannelPayload = (channels) => {
     const mapVal = (v) => {
         if (!v) return null;
-        if (typeof v === 'string' && (v.toLowerCase() === 'wechat' || v.toLowerCase() === 'sms')) return 'Email';
-        return v;
+        return v === 'SMS' ? 'WeChat' : v;
     };
     const arr = Array.isArray(channels) ? channels.map(mapVal).filter(Boolean) : [mapVal(channels)].filter(Boolean);
     if (arr.length === 0) return 'Email';
@@ -146,9 +165,16 @@ const toChannelPayload = (channels) => {
 };
 
 // Convert channel names to enum value for backend
-// WeChat was removed; always send Email (1).
+// Backend expects: Email=1, WeChat=2, Both=3 (Email+WeChat)
 const toChannelEnumValue = (channels) => {
-    return 1;
+    const arr = Array.isArray(channels) ? channels : [channels].filter(Boolean);
+    if (arr.length === 0) return 1; // Default to Email
+    
+    let value = 0;
+    if (arr.includes('Email')) value |= 1;
+    if (arr.includes('WeChat')) value |= 2;
+    
+    return value || 1; // Default to Email if nothing selected
 };
 
 const toAudienceEnumValue = (selected) => {
@@ -230,12 +256,8 @@ const apiFetch = async (path, opts = {}) => {
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const fullPath = path.startsWith('http') ? path : `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 
-    const debug = import.meta.env.DEV && localStorage.getItem('debugApi') === '1';
-    const requestBody = typeof opts.body === 'string' ? safeJsonParse(opts.body) : null;
-    if (debug) {
-        console.log('[DraftsList apiFetch] API_BASE:', API_BASE);
-        console.log('[DraftsList apiFetch] request', opts.method || 'GET', fullPath, requestBody ?? opts.body);
-    }
+  console.log('[DraftsList apiFetch] API_BASE:', API_BASE);
+  console.log('[DraftsList apiFetch] request', opts.method || 'GET', fullPath, opts.body ? JSON.parse(opts.body) : undefined);
 
   const res = await fetch(fullPath, Object.assign({ headers }, opts));
   const text = await res.text().catch(() => '');
@@ -244,9 +266,8 @@ const apiFetch = async (path, opts = {}) => {
     console.error('[DraftsList apiFetch] response error', res.status, fullPath, text);
     throw new Error(errorMsg);
   }
-    const parsed = safeJsonParse(text);
-    if (debug) console.log('[DraftsList apiFetch] response success', res.status, fullPath, parsed ?? (text ? '[non-json response]' : null));
-    return parsed ?? (text || null);
+  console.log('[DraftsList apiFetch] response success', res.status, fullPath, text ? JSON.parse(text) : null);
+  try { return text ? JSON.parse(text) : null; } catch (e) { return text; }
 };
 
 const DraftsList = () => {
@@ -293,8 +314,6 @@ const DraftsList = () => {
 
     useEffect(() => {
         fetchDrafts();
-        fetchTags();
-        fetchPublishedArticles();
     }, []);
 
     const fetchTags = async () => {
@@ -468,11 +487,17 @@ const DraftsList = () => {
             if (debug) console.log('[fetchDrafts] Raw response:', response);
             
             const draftsData = response?.data || response || [];
-            if (debug) console.log('[fetchDrafts] Processed draftsData length:', Array.isArray(draftsData) ? draftsData.length : 0);
+            console.log('[fetchDrafts] Processed draftsData:', draftsData);
+            
+            if (Array.isArray(draftsData)) {
+                draftsData.forEach((draft, idx) => {
+                    console.log('[fetchDrafts] Draft', idx, '- id:', draft.id, 'channel:', draft.channel, 'Channel:', draft.Channel, 'targetAudience:', draft.targetAudience, 'TargetAudience:', draft.TargetAudience);
+                });
+            }
             
             const normalizedDrafts = Array.isArray(draftsData) ? draftsData.map(normalizeDraft) : [];
             setDrafts(normalizedDrafts);
-            if (debug) console.log('[fetchDrafts] Drafts set successfully');
+            console.log('[fetchDrafts] Drafts set successfully with normalized audiences');
         } catch (error) {
             console.error('[fetchDrafts] error:', error);
             alert('Failed to load drafts: ' + error.message);
@@ -510,10 +535,10 @@ const DraftsList = () => {
         }
         
         setEditFormData({
-            title: draft.title || draft.Title || '',
-            subject: draft.subject || draft.Subject || '',
-            body: draft.body || draft.Body || '',
-            channel: normalizeChannels(draft.channel ?? draft.Channel ?? 'Email'),
+            title: draft.title || '',
+            subject: draft.subject || '',
+            body: draft.body || '',
+            channel: normalizeChannels(draft.channel || 'Email'),
             targetAudience: audiences,
             selectedInterestTagIds: interestTags,
             selectedIndustryTagIds: industryTags,
@@ -662,16 +687,13 @@ const DraftsList = () => {
         }
 
         // Validation
-        const title = (toSend?.title ?? toSend?.Title ?? '').trim();
-        const subject = (toSend?.subject ?? toSend?.Subject ?? '').trim();
-        const body = (toSend?.body ?? toSend?.Body ?? '').trim();
-        if (!title || !subject || !body) {
+        if (!draft.title?.trim() || !draft.subject?.trim() || !draft.body?.trim()) {
             alert('Cannot send: Title, Subject, and Message Body are all required.');
             return;
         }
         
         // Build audience description from normalized audience array
-        const audiences = normalizeAudience(toSend.targetAudience ?? toSend.TargetAudience);
+        const audiences = normalizeAudience(draft.targetAudience ?? draft.TargetAudience);
         let audienceDesc = 'All Members';
         if (audiences.includes(0)) {
             audienceDesc = 'All Members';
@@ -679,26 +701,18 @@ const DraftsList = () => {
             audienceDesc = audiences.map(getAudienceLabel).join(', ');
         }
 
-        const channels = normalizeChannels(toSend.channel ?? toSend.Channel);
+        const channels = normalizeChannels(draft.channel ?? draft.Channel);
         const channelDesc = channels.length === 1 ? channels[0] : channels.join(', ');
         
-        if (!window.confirm(`Send "${subject}" to ${audienceDesc} via ${channelDesc} now?`)) return;
+        if (!window.confirm(`Send "${draft.subject}" to ${audienceDesc} via ${channelDesc} now?`)) return;
         
         try {
-            const draftId = draft.id ?? draft.Id;
-            console.log('[handleSend] sending broadcast:', draftId);
-            
-            // Send the broadcast using the same API as BroadcastManagement
-            const result = await sendBroadcast(draftId);
-            console.log('[handleSend] broadcast sent successfully:', result);
-            
-            alert('Broadcast sent successfully!');
-            
-            // Refresh the drafts list to show updated status
-            fetchDrafts();
-            
-            // Navigate to success page
-            navigate('/message-sent', { state: { broadcastSubject: subject || title } });
+            // Delete the draft after sending
+            console.log('[handleSend] deleting draft:', draft.id);
+            await apiFetch(`/api/Broadcast/${draft.id}`, { method: 'DELETE' });
+            console.log('[handleSend] draft deleted successfully');
+            // Navigate to success page with draft info
+            navigate('/message-sent', { state: { broadcastSubject: draft.subject || draft.title } });
         } catch (error) {
             console.error('[handleSend] error sending broadcast:', error);
             alert('Failed to send broadcast: ' + error.message);
@@ -1054,14 +1068,7 @@ const DraftsList = () => {
                                     {editingId === draft.id ? (
                                         // Edit Mode
                                         <div>
-                                            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: '#333' }}>
-                                                Edit Draft
-                                                {loadingDetailId === editingId && (
-                                                    <span style={{ marginLeft: '10px', fontSize: '12px', fontWeight: '500', color: '#666' }}>
-                                                        Loading details...
-                                                    </span>
-                                                )}
-                                            </h3>
+                                            <h3 style={{ fontSize: '16px', fontWeight: '600', marginBottom: '16px', color: '#333' }}>Edit Draft</h3>
                                             
                                             <div style={{ marginBottom: '16px' }}>
                                                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
@@ -1124,161 +1131,15 @@ const DraftsList = () => {
                                                         fontFamily: 'inherit',
                                                         boxSizing: 'border-box'
                                                     }}
-                                                    placeholder={loadingDetailId === editingId ? 'Loading message body...' : ''}
                                                 />
-                                            </div>
-
-                                            <div style={{ marginBottom: '16px' }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
-                                                    <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', margin: 0, color: '#333' }}>
-                                                        Attach Published Articles (Optional)
-                                                    </label>
-                                                    <div style={{ display: 'flex', gap: '8px' }}>
-                                                        <button
-                                                            type="button"
-                                                            onClick={fetchPublishedArticles}
-                                                            style={{ padding: '6px 10px', background: 'white', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: 'pointer', fontSize: '12px' }}
-                                                        >
-                                                            Refresh
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={clearArticleFilters}
-                                                            disabled={!selectedIndustryTagId && (selectedInterestTagIds || []).length === 0}
-                                                            style={{ padding: '6px 10px', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: (!selectedIndustryTagId && (selectedInterestTagIds || []).length === 0) ? 'not-allowed' : 'pointer', fontSize: '12px', opacity: (!selectedIndustryTagId && (selectedInterestTagIds || []).length === 0) ? 0.6 : 1 }}
-                                                        >
-                                                            Clear Filters
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setEditFormData({ ...editFormData, selectedArticleIds: [] })}
-                                                            disabled={(editFormData.selectedArticleIds || []).length === 0}
-                                                            style={{ padding: '6px 10px', background: '#f3f4f6', border: '1px solid #e5e7eb', borderRadius: '6px', cursor: (editFormData.selectedArticleIds || []).length === 0 ? 'not-allowed' : 'pointer', fontSize: '12px', opacity: (editFormData.selectedArticleIds || []).length === 0 ? 0.6 : 1 }}
-                                                        >
-                                                            Clear
-                                                        </button>
-                                                    </div>
-                                                </div>
-
-                                                <div style={{ fontSize: '12px', color: '#666', marginBottom: '8px' }}>
-                                                    Selected: {(editFormData.selectedArticleIds || []).length}
-                                                </div>
-
-                                                <input
-                                                    type="text"
-                                                    value={articleSearch}
-                                                    onChange={(e) => setArticleSearch(e.target.value)}
-                                                    placeholder="Search by title..."
-                                                    style={{ width: '100%', padding: '9px 10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', boxSizing: 'border-box', marginBottom: '10px' }}
-                                                />
-
-                                                <div style={{ display: 'grid', gap: '10px', marginBottom: '10px' }}>
-                                                    <div>
-                                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>Industry</div>
-                                                        <select
-                                                            value={selectedIndustryTagId}
-                                                            disabled={tagsLoading}
-                                                            onChange={async (e) => {
-                                                                const next = e.target.value;
-                                                                setSelectedIndustryTagId(next);
-                                                                await fetchPublishedArticles({ industryTagId: next, interestTagIds: selectedInterestTagIds });
-                                                            }}
-                                                            style={{ width: '100%', padding: '9px 10px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '13px', background: 'white' }}
-                                                        >
-                                                            <option value="">All industries</option>
-                                                            {(availableIndustryTags || []).map((t) => {
-                                                                const id = t?.Id ?? t?.id;
-                                                                const name = t?.Name ?? t?.name ?? `Industry ${id}`;
-                                                                return <option key={id} value={id}>{name}</option>;
-                                                            })}
-                                                        </select>
-                                                    </div>
-
-                                                    <div>
-                                                        <div style={{ fontSize: '12px', color: '#666', marginBottom: '6px' }}>Interest tags</div>
-                                                        <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '8px 10px', background: 'white', maxHeight: '110px', overflow: 'auto' }}>
-                                                            {tagsLoading ? (
-                                                                <div style={{ fontSize: '12px', color: '#666' }}>Loading tags...</div>
-                                                            ) : (
-                                                                (availableInterestTags || []).length === 0 ? (
-                                                                    <div style={{ fontSize: '12px', color: '#666' }}>No interest tags available.</div>
-                                                                ) : (
-                                                                    (availableInterestTags || []).map((t) => {
-                                                                        const id = t?.Id ?? t?.id;
-                                                                        const name = t?.Name ?? t?.name ?? `Interest ${id}`;
-                                                                        const checked = (selectedInterestTagIds || []).includes(id);
-                                                                        return (
-                                                                            <label key={id} style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px', color: '#111827', cursor: 'pointer', padding: '3px 0' }}>
-                                                                                <input type="checkbox" checked={checked} onChange={() => toggleInterestFilter(id)} style={{ width: '15px', height: '15px', cursor: 'pointer' }} />
-                                                                                <span>{name}</span>
-                                                                            </label>
-                                                                        );
-                                                                    })
-                                                                )
-                                                            )}
-                                                        </div>
-                                                    </div>
-
-                                                    {tagsError && (
-                                                        <div style={{ padding: '8px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', color: '#92400e', fontSize: '12px' }}>
-                                                            {tagsError}
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {publishedError && (
-                                                    <div style={{ padding: '8px 10px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '8px', color: '#991b1b', fontSize: '12px', marginBottom: '10px' }}>
-                                                        {publishedError}
-                                                    </div>
-                                                )}
-
-                                                <div style={{ maxHeight: '220px', overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: '8px' }}>
-                                                    {publishedLoading ? (
-                                                        <div style={{ padding: '12px', color: '#666', fontSize: '13px' }}>Loading published articles...</div>
-                                                    ) : (
-                                                        (publishedArticles || [])
-                                                            .filter((a) => {
-                                                                const title = (a?.title ?? a?.Title ?? '').toString().toLowerCase();
-                                                                const q = (articleSearch || '').trim().toLowerCase();
-                                                                return !q || title.includes(q);
-                                                            })
-                                                            .slice(0, 200)
-                                                            .map((a) => {
-                                                                const publicationDraftId = a?.publicationDraftId ?? a?.PublicationDraftId;
-                                                                const title = a?.title ?? a?.Title ?? '(Untitled)';
-                                                                const isSelected = (editFormData.selectedArticleIds || []).includes(publicationDraftId);
-                                                                return (
-                                                                    <div
-                                                                        key={publicationDraftId}
-                                                                        role="button"
-                                                                        tabIndex={0}
-                                                                        onClick={() => toggleSelectedArticle(publicationDraftId)}
-                                                                        onKeyDown={(e) => {
-                                                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                                                e.preventDefault();
-                                                                                toggleSelectedArticle(publicationDraftId);
-                                                                            }
-                                                                        }}
-                                                                        style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '10px', borderBottom: '1px solid #e5e7eb', cursor: 'pointer', background: isSelected ? '#fef2f2' : 'white' }}
-                                                                    >
-                                                                        <input type="checkbox" checked={!!isSelected} readOnly style={{ marginTop: '2px', width: '16px', height: '16px', accentColor: '#dc2626', cursor: 'pointer' }} />
-                                                                        <div style={{ fontSize: '13px', color: '#111827', lineHeight: '1.4' }}>{title}</div>
-                                                                    </div>
-                                                                );
-                                                            })
-                                                    )}
-                                                    {!publishedLoading && (publishedArticles || []).length === 0 && !publishedError && (
-                                                        <div style={{ padding: '12px', color: '#666', fontSize: '13px' }}>No published articles available.</div>
-                                                    )}
-                                                </div>
                                             </div>
 
                                             <div style={{ marginBottom: '16px' }}>
                                                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
-                                                    Channel
+                                                    Channels (Select Multiple)
                                                 </label>
                                                 <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                                                    {['Email'].map((ch) => {
+                                                    {['Email', 'WeChat'].map((ch) => {
                                                         const isSelected = editFormData.channel.includes(ch);
                                                         return (
                                                             <label
@@ -1528,29 +1389,14 @@ const DraftsList = () => {
                                             </div>
                                         </div>
                                     ) : (
+                                        // View Mode
                                         <div>
                                             <div style={{ marginBottom: '16px' }}>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: '8px' }}>
-                                                    <div style={{ flex: 1 }}>
-                                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                                            <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0, color: '#333' }}>
-                                                                {draft.title || draft.subject || 'Untitled'}
-                                                            </h3>
-                                                            {draft.status && (
-                                                                <span style={{
-                                                                    display: 'inline-block',
-                                                                    padding: '4px 10px',
-                                                                    background: draft.status === 'Sent' || draft.status === 'sent' ? '#dcfce7' : draft.status === 'Scheduled' || draft.status === 'scheduled' ? '#fef3c7' : '#f3f4f6',
-                                                                    color: draft.status === 'Sent' || draft.status === 'sent' ? '#166534' : draft.status === 'Scheduled' || draft.status === 'scheduled' ? '#92400e' : '#4b5563',
-                                                                    borderRadius: '4px',
-                                                                    fontSize: '11px',
-                                                                    fontWeight: '600',
-                                                                    textTransform: 'uppercase'
-                                                                }}>
-                                                                    {draft.status === 'Sent' || draft.status === 'sent' ? '✓ Sent' : draft.status === 'Scheduled' || draft.status === 'scheduled' ? '⏰ Scheduled' : draft.status}
-                                                                </span>
-                                                            )}
-                                                        </div>
+                                                    <div>
+                                                        <h3 style={{ fontSize: '18px', fontWeight: '600', margin: 0, color: '#333', marginBottom: '4px' }}>
+                                                            {draft.title || draft.subject || 'Untitled'}
+                                                        </h3>
                                                         <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>
                                                             {draft.subject}
                                                         </p>
@@ -1605,87 +1451,35 @@ const DraftsList = () => {
                                                     {/* Removed channel and audience badges per user request */}
                                                 </div>
                                                 <p style={{ fontSize: '13px', color: '#666', margin: '12px 0 0 0', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
-                                                    {draft.body ? (
-                                                        <>{draft.body?.substring(0, 200)}{draft.body?.length > 200 ? '...' : ''}</>
-                                                    ) : (
-                                                        <span style={{ color: '#9ca3af' }}>Body not loaded in list view — click Edit to load.</span>
-                                                    )}
+                                                    {draft.body?.substring(0, 200)}{draft.body?.length > 200 ? '...' : ''}
                                                 </p>
-                                                <div style={{ fontSize: '12px', color: '#666', marginTop: '10px' }}>
-                                                    Selected articles: {draft.selectedArticlesCount ?? (draft.selectedArticleIds || []).length}
-                                                </div>
-                                                {(draft.scheduledSendAt || draft.ScheduledSendAt) && (
-                                                    <div style={{ 
-                                                        fontSize: '13px', 
-                                                        color: '#92400e', 
-                                                        marginTop: '10px',
-                                                        padding: '8px 12px',
-                                                        background: '#fef3c7',
-                                                        borderRadius: '6px',
-                                                        border: '1px solid #fcd34d',
-                                                        display: 'inline-block'
-                                                    }}>
-                                                        ⏰ Scheduled for: {new Date(draft.scheduledSendAt || draft.ScheduledSendAt).toLocaleString()}
-                                                    </div>
-                                                )}
                                             </div>
 
-                                            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                                                {/* Show Send button only for non-sent drafts */}
-                                                {!(draft.status === 'Sent' || draft.status === 'sent') && !(draft.status === 'Scheduled' || draft.status === 'scheduled') && (
-                                                    <button
-                                                        onClick={() => handleSend(draft)}
-                                                        style={{
-                                                            flex: '1 1 auto',
-                                                            minWidth: '100px',
-                                                            padding: '10px 16px',
-                                                            background: '#dc2626',
-                                                            color: 'white',
-                                                            border: 'none',
-                                                            borderRadius: '6px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '13px',
-                                                            fontWeight: '500',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            gap: '6px'
-                                                        }}
-                                                    >
-                                                        <span>📤</span> Send Now
-                                                    </button>
-                                                )}
-                                                
-                                                {/* Show Unschedule button for scheduled broadcasts */}
-                                                {(draft.status === 'Scheduled' || draft.status === 'scheduled') && (
-                                                    <button
-                                                        onClick={() => handleUnschedule(draft)}
-                                                        style={{
-                                                            flex: '1 1 auto',
-                                                            minWidth: '100px',
-                                                            padding: '10px 16px',
-                                                            background: '#f59e0b',
-                                                            color: 'white',
-                                                            border: 'none',
-                                                            borderRadius: '6px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '13px',
-                                                            fontWeight: '500',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            gap: '6px'
-                                                        }}
-                                                    >
-                                                        <span>🚫</span> Unschedule
-                                                    </button>
-                                                )}
-                                                
+                                            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                                                <button
+                                                    onClick={() => handleSend(draft)}
+                                                    style={{
+                                                        flex: 1,
+                                                        padding: '10px 16px',
+                                                        background: '#dc2626',
+                                                        color: 'white',
+                                                        border: 'none',
+                                                        borderRadius: '6px',
+                                                        cursor: 'pointer',
+                                                        fontSize: '13px',
+                                                        fontWeight: '500',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        gap: '6px'
+                                                    }}
+                                                >
+                                                    <span>📤</span> Send
+                                                </button>
                                                 <button
                                                     onClick={() => handleEdit(draft)}
                                                     style={{
-                                                        flex: '1 1 auto',
-                                                        minWidth: '100px',
+                                                        flex: 1,
                                                         padding: '10px 16px',
                                                         background: '#3b82f6',
                                                         color: 'white',
@@ -1705,8 +1499,7 @@ const DraftsList = () => {
                                                 <button
                                                     onClick={() => handleDelete(draft.id)}
                                                     style={{
-                                                        flex: '1 1 auto',
-                                                        minWidth: '100px',
+                                                        flex: 1,
                                                         padding: '10px 16px',
                                                         background: '#fee',
                                                         color: '#dc2626',

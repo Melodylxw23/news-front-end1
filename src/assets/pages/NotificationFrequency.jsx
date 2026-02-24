@@ -95,7 +95,7 @@ export default function NotificationFrequency() {
       // Check if user is a member and navigate accordingly
       const userRole = localStorage.getItem('role')
       if (userRole === 'member') {
-        navigate('/member/profile')
+        navigate('/member/articles')
       } else {
         navigate('/landing')
       }
@@ -108,7 +108,7 @@ export default function NotificationFrequency() {
   }
 
   const handleSkip = () => {
-    navigate('/landing')
+    navigate('/member/articles')
   }
 
   const handleBack = () => {
