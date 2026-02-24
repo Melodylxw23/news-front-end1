@@ -4,11 +4,12 @@ import { useNavigate } from 'react-router-dom'
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || ''
 
 const apiFetch = async (path, opts = {}) => {
+  const token = localStorage.getItem('token')
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {})
+  if (token) headers['Authorization'] = `Bearer ${token}`
   const fullPath = path.startsWith('http') ? path : `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`
 
-  const fetchOpts = Object.assign({}, opts, { headers })
-  const res = await fetch(fullPath, fetchOpts)
+  const res = await fetch(fullPath, Object.assign({ headers }, opts))
   const text = await res.text().catch(() => '')
   if (!res.ok) {
     const errorMsg = `HTTP ${res.status} ${res.statusText}${text ? ': ' + text : ''}`
@@ -17,7 +18,7 @@ const apiFetch = async (path, opts = {}) => {
   try { return text ? JSON.parse(text) : null } catch (e) { return text }
 }
 
-export default function NotificationPreferences({ onComplete }) {
+export default function NotificationPreferences() {
   const navigate = useNavigate()
   const [language, setLanguage] = useState('English')
   const [channels, setChannels] = useState({
@@ -27,6 +28,61 @@ export default function NotificationPreferences({ onComplete }) {
     inApp: false
   })
   const [loading, setLoading] = useState(false)
+
+  // Load existing preferences on mount
+  useEffect(() => {
+    const loadPreferences = async () => {
+      const parseChannels = (channelsString) => {
+        const existing = (channelsString || '').split(',').map(c => c.trim().toLowerCase())
+        return {
+          whatsapp: existing.includes('whatsapp'),
+          email: existing.includes('email'),
+          sms: existing.includes('sms'),
+          inApp: existing.includes('inapp') || existing.includes('in-app')
+        }
+      }
+
+      try {
+        // 1) Try pending preferences saved in localStorage (onboarding/flow)
+        try {
+          const pending = JSON.parse(localStorage.getItem('pendingNotificationPreferences') || 'null')
+          const pendingChannels = pending?.NotificationChannels || pending?.notificationChannels
+          if (pendingChannels) {
+            setChannels(parseChannels(pendingChannels))
+            return
+          }
+        } catch (e) {
+          console.warn('[NotificationPreferences] Could not parse pending preferences', e)
+        }
+
+        // 2) Fallback: fetch from server
+        const response = await apiFetch('/api/UserControllers/me')
+        const userData = response?.data || response
+        
+        console.log('[NotificationPreferences] Full response:', response)
+        console.log('[NotificationPreferences] Loaded user data:', userData)
+        
+        // The notification data is nested in the member object
+        const memberData = userData?.member || userData?.Member
+        console.log('[NotificationPreferences] Member data:', memberData)
+        
+        // Pre-populate channels if they exist
+        const channelsString = memberData?.notificationChannels || memberData?.NotificationChannels
+        console.log('[NotificationPreferences] Channels string:', channelsString)
+        
+        if (channelsString) {
+          const channelsState = parseChannels(channelsString)
+          console.log('[NotificationPreferences] Pre-populating channels:', channelsState)
+          setChannels(channelsState)
+        } else {
+          console.log('[NotificationPreferences] No existing channels found')
+        }
+      } catch (err) {
+        console.error('[NotificationPreferences] Error loading preferences:', err)
+      }
+    }
+    loadPreferences()
+  }, [])
 
   const handleChannelToggle = (channel) => {
     setChannels(prev => ({ ...prev, [channel]: !prev[channel] }))
@@ -42,23 +98,19 @@ export default function NotificationPreferences({ onComplete }) {
       
       console.log('[NotificationPreferences] Selected channels:', selectedChannels)
       
-      const preferences = {
-        NotificationChannels: selectedChannels
+      const payload = {
+        NotificationChannels: selectedChannels // "whatsapp,email,sms,inApp"
       }
 
-      console.log('[NotificationPreferences] Storing preferences:', preferences)
+      console.log('[NotificationPreferences] Saving preferences:', payload)
       
-      // Store in localStorage for registration process
-      localStorage.setItem('pendingNotificationPreferences', JSON.stringify(preferences))
+      await apiFetch('/api/UserControllers/update-notification-preferences', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
 
-      // Call the onComplete callback if provided (from PreferencesSetup)
-      if (onComplete) {
-        onComplete()
-      } else {
-        // Fallback for standalone usage
-        alert('Notification preferences saved!')
-        navigate('/notification-frequency')
-      }
+      alert('Preferences saved!')
+      navigate('/notification-frequency')
     } catch (err) {
       console.error('[NotificationPreferences] Error:', err)
       alert('Failed to save preferences: ' + err.message)
@@ -68,7 +120,7 @@ export default function NotificationPreferences({ onComplete }) {
   }
 
   const handleSkip = () => {
-    navigate('/landing')
+    navigate('/member/articles')
   }
 
   const handleBack = () => {

@@ -22,6 +22,7 @@ export default function MemberArticleDetail() {
   const [error, setError] = useState(null)
   const [article, setArticle] = useState(null)
   const [payload, setPayload] = useState(null)
+  const [lang, setLang] = useState('EN')
 
   useEffect(() => {
     const load = async () => {
@@ -44,30 +45,28 @@ export default function MemberArticleDetail() {
   const location = useLocation()
   const fromSaved = location?.state?.fromSaved === true
 
-  const title =
-    article?.title ?? article?.Title ??
-    article?.titleEN ?? article?.TitleEN ??
-    article?.titleZH ?? article?.TitleZH ??
-    'Untitled'
+  const titleEN =
+    article?.titleEN ?? article?.TitleEN ?? article?.title ?? article?.Title ?? ''
+  const titleZH = article?.titleZH ?? article?.TitleZH ?? article?.title ?? article?.Title ?? ''
+  const title = (lang === 'ZH' && titleZH) ? titleZH : (titleEN || titleZH || 'Untitled')
 
   const publishedAt = article?.publishedAt ?? article?.PublishedAt
   const author = article?.author ?? article?.Author
 
-  const content =
-    article?.fullContentEN ?? article?.fullContentEn ?? article?.FullContentEN ??
-    article?.fullContentZH ?? article?.fullContentZh ?? article?.FullContentZH ??
-    article?.fullContent ?? article?.FullContent ??
-    payload?.translatedContent ?? payload?.TranslatedContent ??
-    payload?.originalContent ?? payload?.OriginalContent ??
-    payload?.Translated ?? payload?.Original ??
-    ''
+  const contentEN =
+    article?.fullContentEN ?? article?.FullContentEN ?? article?.fullContentEn ??
+    payload?.fullContentEN ?? payload?.FullContentEN ?? payload?.translatedContent ?? payload?.TranslatedContent ??
+    article?.fullContent ?? article?.FullContent ?? ''
+  const contentZH =
+    article?.fullContentZH ?? article?.FullContentZH ?? article?.fullContentZh ??
+    payload?.fullContentZH ?? payload?.FullContentZH ?? ''
 
-  const summary =
-    article?.summary ?? article?.Summary ??
-    article?.summaryEN ?? article?.SummaryEN ??
-    article?.summaryZH ?? article?.SummaryZH ??
-    payload?.summary ?? payload?.Summary ??
-    ''
+  const summaryEN =
+    article?.summaryEN ?? article?.SummaryEN ?? article?.summary ?? article?.Summary ?? payload?.summary ?? payload?.Summary ?? ''
+  const summaryZH = article?.summaryZH ?? article?.SummaryZH ?? article?.summary ?? article?.Summary ?? ''
+
+  const content = (lang === 'ZH' && contentZH) ? contentZH : (contentEN || contentZH || 'No content available.')
+  const summary = (lang === 'ZH' && summaryZH) ? summaryZH : (summaryEN || summaryZH || '')
 
   return (
     <div style={{ padding: '32px 40px', minHeight: '100vh', background: '#f7fbff' }}>
@@ -95,7 +94,39 @@ export default function MemberArticleDetail() {
               {publishedAt ? new Date(publishedAt).toLocaleString() : 'Published'}
             </div>
             <h1 style={{ margin: '0 0 12px', fontSize: 28, fontWeight: 800, color: '#111827' }}>{title}</h1>
-            {author && <div style={{ color: '#6b7280', fontSize: 13, marginBottom: 16 }}>By {author}</div>}
+            {author && <div style={{ color: '#6b7280', fontSize: 13, marginBottom: 8 }}>By {author}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 12 }}>
+              <button
+                onClick={() => setLang('EN')}
+                aria-pressed={lang === 'EN'}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: lang === 'EN' ? '1px solid #b91c1c' : '1px solid #e5e7eb',
+                  background: lang === 'EN' ? '#b91c1c' : 'white',
+                  color: lang === 'EN' ? 'white' : '#374151',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                English
+              </button>
+              <button
+                onClick={() => setLang('ZH')}
+                aria-pressed={lang === 'ZH'}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 6,
+                  border: lang === 'ZH' ? '1px solid #b91c1c' : '1px solid #e5e7eb',
+                  background: lang === 'ZH' ? '#b91c1c' : 'white',
+                  color: lang === 'ZH' ? 'white' : '#374151',
+                  cursor: 'pointer',
+                  fontWeight: 600
+                }}
+              >
+                中文
+              </button>
+            </div>
             {summary && (
               <div style={{ marginBottom: 16 }}>
                 <div style={{ background: '#f8fafc', border: '1px solid #e6eefc', padding: 12, borderRadius: 8, color: '#374151', fontSize: 15, lineHeight: 1.6 }}>
@@ -109,6 +140,19 @@ export default function MemberArticleDetail() {
                 </div>
               </div>
             )}
+
+            {/* Hero image (if available from article or publish draft) */}
+            {(() => {
+              const hero = article?.heroImageUrl ?? article?.HeroImageUrl ?? article?.imageUrl ?? article?.ImageUrl ?? article?.image ?? article?.Image
+                ?? payload?.heroImageUrl ?? payload?.HeroImageUrl ?? payload?.article?.heroImageUrl ?? payload?.article?.HeroImageUrl
+                ?? payload?.draft?.HeroImageUrl ?? payload?.draft?.heroImageUrl ?? null
+              if (!hero) return null
+              return (
+                <div style={{ marginBottom: 16, textAlign: 'center' }}>
+                  <img src={hero} alt={(title || 'Article image')} style={{ maxWidth: '100%', height: 'auto', borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.06)' }} />
+                </div>
+              )
+            })()}
 
             <div style={{ color: '#374151', fontSize: 15, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
               {content || 'No content available.'}

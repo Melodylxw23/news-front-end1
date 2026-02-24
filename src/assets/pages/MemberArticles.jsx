@@ -75,37 +75,24 @@ export default function MemberArticles() {
       try {
         // Load member profile to get current industry
         let memberIndustryId = null
-        console.log('[MemberArticles] Starting profile fetch...')
         try {
           const profileRes = await apiFetch('/api/UserControllers/me')
-          console.log('[MemberArticles] Profile response:', profileRes)
           if (profileRes) {
             const member = profileRes.member || profileRes.Member || profileRes
-            console.log('[MemberArticles] Member object:', member)
-            // Check for industryTags (plural) first, then industryTag (singular)
             const industryTagsArray = member.industryTags || member.IndustryTags || []
             const industryTag = industryTagsArray[0] || member.industryTag || member.IndustryTag || member.industry || member.Industry
-            console.log('[MemberArticles] Industry tag from profile:', industryTag)
             if (industryTag && typeof industryTag === 'object') {
               const id = industryTag.industryTagId ?? industryTag.IndustryTagId
-              console.log('[MemberArticles] Extracted industry ID from profile:', id)
-              if (id) {
-                memberIndustryId = id
-              }
+              if (id) memberIndustryId = id
             }
           }
         } catch (err) {
-          console.warn('[MemberArticles] Profile fetch failed:', err)
+          // profile unavailable, continue without industry filter
         }
-        
-        console.log('[MemberArticles] Final memberIndustryId:', memberIndustryId)
         if (memberIndustryId) {
           setSelectedIndustryId(memberIndustryId)
-          console.log('[MemberArticles] Set selectedIndustryId to:', memberIndustryId)
         } else {
-          // Clear bad localStorage value
           localStorage.removeItem('selectedIndustryTagId')
-          console.log('[MemberArticles] Cleared selectedIndustryTagId from localStorage')
         }
 
         // Load interest tags to map IDs to names
@@ -121,7 +108,6 @@ export default function MemberArticles() {
         })
         setInterestTagsMap(tagsMap)
         setInterestTagsList(tagsList)
-        console.log('[MemberArticles] Interest Tags Map:', tagsMap)
 
         // Load industry tags to map IDs to names
         const industryRes = await apiFetch('/api/IndustryTags')
@@ -137,18 +123,29 @@ export default function MemberArticles() {
           if (id && nameEN) industryMap[id] = nameEN
         })
         setIndustryTagsMap(industryMap)
-        console.log('[MemberArticles] Industry Tags Map:', industryMap)
 
-        // Load articles
-        const res = await apiFetch('/api/articles/published')
-        const list = Array.isArray(res)
-          ? res
-          : Array.isArray(res?.data)
-            ? res.data
-            : Array.isArray(res?.items)
-              ? res.items
-              : []
-        console.log('[MemberArticles] Sample Article:', list[0])
+        // Load articles using the same published endpoint as PublicArticles
+        let res = null
+        try {
+          res = await apiFetch('/api/articles/published?page=1&pageSize=1000')
+        } catch (e) {
+          console.debug('published endpoint failed, will fallback to paged articles', e.message)
+        }
+
+        let list = Array.isArray(res?.items) ? res.items : Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : []
+
+        // if published endpoint returned nothing, fall back to paged all-articles and filter
+        if (!list || list.length === 0) {
+          try {
+            const all = await apiFetch('/api/articles?page=1&pageSize=1000')
+            const allList = Array.isArray(all?.items) ? all.items : Array.isArray(all) ? all : Array.isArray(all?.data) ? all.data : []
+            const isPublished = a => !!(a.publishedAt ?? a.PublishedAt) || /publish/i.test((a.status ?? a.Status ?? '') + '')
+            list = allList.filter(isPublished)
+          } catch (e) {
+            throw e
+          }
+        }
+
         setArticles(list)
       } catch (e) {
         setError(e.message || 'Failed to load articles')
@@ -172,7 +169,7 @@ export default function MemberArticles() {
           return
         }
       } catch (err) {
-        console.warn('[MemberArticles] Saved articles API not available, falling back to localStorage')
+        // API not available, fall back to localStorage
       }
       try {
         const stored = localStorage.getItem('savedArticleIds')
@@ -263,19 +260,18 @@ export default function MemberArticles() {
     if (searchQuery) {
       const query = searchQuery.toLowerCase()
       filtered = filtered.filter(a => {
-        const title = (a.title ?? a.Title ?? '').toLowerCase()
-        const summary = (a.summary ?? a.Summary ?? '').toLowerCase()
+        const title = (a.titleEN ?? a.titleZH ?? a.title ?? a.Title ?? '').toLowerCase()
+        const summary = (a.summaryEN ?? a.summaryZH ?? a.summary ?? a.Summary ?? '').toLowerCase()
         const category = (a.category ?? a.Category ?? '').toLowerCase()
         const industry = (a.industry ?? a.Industry ?? '').toLowerCase()
         const topic = (a.topic ?? a.Topic ?? '').toLowerCase()
         const tags = (a.tags ?? a.Tags ?? '').toString().toLowerCase()
         const source = (a.source ?? a.Source ?? '').toLowerCase()
-        
         return (
-          title.includes(query) || 
-          summary.includes(query) || 
-          category.includes(query) || 
-          industry.includes(query) || 
+          title.includes(query) ||
+          summary.includes(query) ||
+          category.includes(query) ||
+          industry.includes(query) ||
           topic.includes(query) ||
           tags.includes(query) ||
           source.includes(query)
@@ -293,14 +289,8 @@ export default function MemberArticles() {
     return filtered
   }
 
-  const industryArticles = getFilteredArticles('industry')
   const topicArticles = getFilteredArticles('topics')
-
-  // articles that match the industry (already filtered and sorted)
-  const industryMatchArticles = industryArticles
-
-  // other articles are all articles (with search/sort applied) minus the matches
-  const otherIndustryArticles = getFilteredArticles().filter(a => !industryMatchArticles.includes(a))
+  const allArticles = getFilteredArticles()
 
   // topic icon helper
   const getTopicIcon = (name, id) => {
@@ -351,8 +341,8 @@ export default function MemberArticles() {
     const isSaved = savedIds.has(Number(id))
 
     return (
-      <Link to={`/member/articles/${id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
-        <div key={id} style={{ 
+      <Link key={id} to={`/member/articles/${id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+        <div style={{ 
           borderRadius: 12, 
           overflow: 'hidden', 
           boxShadow: '0 4px 12px rgba(0,0,0,0.08)', 
@@ -385,9 +375,11 @@ export default function MemberArticles() {
                   </span>
                 )}
               </div>
-              <span style={{ padding: '4px 8px', background: '#e5e7eb', color: '#374151', borderRadius: 4, fontWeight: 600 }}>
-                {language === 'ZH' || language === 'Chinese' ? 'Chinese' : 'English'}
-              </span>
+              {(language === 'ZH' || language === 'Chinese') && (
+                <span style={{ padding: '4px 8px', background: '#e5e7eb', color: '#374151', borderRadius: 4, fontWeight: 600 }}>
+                  {'Chinese'}
+                </span>
+              )}
             </div>
 
             {/* Title */}
@@ -587,34 +579,22 @@ export default function MemberArticles() {
 
         {!loading && !error && (
           <>
-            {/* From Your Industry Section (filtered by member's selected industry) */}
-            {industryMatchArticles.length > 0 ? (
+            {/* All Articles (single combined list) */}
+            {allArticles.length > 0 ? (
               <div style={{ marginBottom: 48 }}>
                 <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1f2a37', marginBottom: 20, borderBottom: '2px solid #b91c1c', paddingBottom: 10 }}>
-                  From Your Industry
+                  All Articles
                 </h2>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 20 }}>
-                  {industryMatchArticles.map((article, idx) => renderArticleCard(article, idx))}
+                  {allArticles.map((article, idx) => renderArticleCard(article, idx))}
                 </div>
               </div>
             ) : (
               <div style={{ marginBottom: 24 }}>
                 <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1f2a37', marginBottom: 12 }}>
-                  From Your Industry
+                  All Articles
                 </h2>
-                <div style={{ color: '#6b7280', marginBottom: 24 }}>No articles found for your selected industry.</div>
-              </div>
-            )}
-
-            {/* From Other Industries Section */}
-            {otherIndustryArticles.length > 0 && (
-              <div style={{ marginBottom: 48 }}>
-                <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1f2a37', marginBottom: 20, borderBottom: '2px solid #b91c1c', paddingBottom: 10 }}>
-                  From Other Industries
-                </h2>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 20 }}>
-                  {otherIndustryArticles.map((article, idx) => renderArticleCard(article, idx))}
-                </div>
+                <div style={{ color: '#6b7280', marginBottom: 24 }}>No articles found.</div>
               </div>
             )}
 
@@ -677,7 +657,7 @@ export default function MemberArticles() {
             )}
 
             {/* No articles state */}
-            {industryArticles.length === 0 && topicArticles.length === 0 && (
+            {allArticles.length === 0 && topicArticles.length === 0 && (
               <div style={{ padding: 48, textAlign: 'center', color: '#6b7280' }}>
                 <p style={{ fontSize: 16 }}>No articles found matching your search.</p>
               </div>

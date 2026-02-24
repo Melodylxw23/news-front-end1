@@ -45,12 +45,27 @@ import PublishArticle from './assets/pages/PublishArticle';
 import PublicArticles from './assets/pages/PublicArticles';
 import TopicsOfInterest from './assets/pages/TopicsOfInterest';
 import ForgotPassword from './assets/pages/ForgotPassword';
+import ResetPassword from './assets/pages/ResetPassword';
 import MemberArticles from './assets/pages/MemberArticles';
 import MemberArticleDetail from './assets/pages/MemberArticleDetail';
 import ConsultantAdvice from './assets/pages/ConsultantAdvice';
 import BroadcastAnalytics from './assets/pages/BroadcastAnalytics';
+import ConsultantMembers from './assets/pages/ConsultantMembers';
 
 // Sidebar component (trimmed to use only existing pages)
+function normalizeRole(rawRole) {
+  const role = String(rawRole || '').toLowerCase().trim();
+  if (!role) return null;
+  if (role === 'client' || role === 'customer') return 'member';
+  if (role === 'members') return 'member';
+  if (role === 'consultants') return 'consultant';
+  if (role === 'staff' || role.includes('staff')) return 'consultant';
+  if (role === 'admins') return 'admin';
+  if (role.includes('admin')) return 'admin';
+  if (role.includes('consultant')) return 'consultant';
+  if (role.includes('member')) return 'member';
+  return role;
+}
 function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen, onClose, userRole }) {
   const location = useLocation();
   const [isLoaded, setIsLoaded] = useState(false);
@@ -167,6 +182,7 @@ function Sidebar({ isCollapsed, onToggle, isLoggedIn, onLogout, isMobile, isOpen
     ],
     consultant: [
       { path: '/landing', label: 'Dashboard', icon: icons.dashboard },
+      { path: '/consultant/members', label: 'Member Management', icon: icons.users },
       { path: '/consultant/fetch', label: 'Fetch Articles', icon: icons.articles },
       { path: '/consultant/publish-queue', label: 'Publish Queue', icon: icons.publish },
       {path: '/consultant-advice', label: 'Consultant Advice', icon: icons.users}
@@ -366,9 +382,9 @@ function Separator({ borderColor = 'gray.200', mb, animation, ...rest }) {
 function AppContent() {
   const location = useLocation();
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
-  const [userRole, setUserRole] = useState(localStorage.getItem('role') || 'client');
+  const [userRole, setUserRole] = useState(() => normalizeRole(localStorage.getItem('role')) || 'member');
 
-  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password', '/set-initial-password', '/public-articles', '/topics-of-interest'];
+  const authPaths = ['/login', '/MemberLogin', '/StaffLogin', '/register', '/StaffRegister', '/forgot-password', '/set-initial-password', '/public-articles', '/topics-of-interest', '/select-topics', '/notification-preferences', '/notification-frequency', '/setup-preferences'];
   const isAuthPage = authPaths.includes(location.pathname) || location.pathname.startsWith('/reset-password');
   const showSidebar = isLoggedIn && !isAuthPage;
 
@@ -378,7 +394,7 @@ function AppContent() {
     const role = localStorage.getItem('role');
     setIsLoggedIn(!!token);
     if (role) {
-      setUserRole(role);
+      setUserRole(normalizeRole(role) || 'member');
     }
   }, [location.pathname]);
 
@@ -388,14 +404,19 @@ function AppContent() {
     return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
-  const handleLoginSuccess = (role) => { setIsLoggedIn(true); setUserRole(role); };
+  const handleLoginSuccess = (role) => { setIsLoggedIn(true); setUserRole(normalizeRole(role) || 'member'); };
   // navigate to landing after login
   const navigate = useNavigate();
   const handleLoginSuccessAndNavigate = (role) => {
     setIsLoggedIn(true);
-    setUserRole(role);
-    if (String(role).toLowerCase() === 'member') {
+    const norm = normalizeRole(role) || 'member';
+    setUserRole(norm);
+    if (norm === 'member') {
       navigate('/member/articles');
+    } else if (norm === 'consultant') {
+      navigate('/consultant/members');
+    } else if (norm === 'admin') {
+      navigate('/admin/users');
     } else {
       navigate('/landing');
     }
@@ -448,6 +469,7 @@ function AppContent() {
           <Route path={'/admin/categories'} element={<CategoryManagement />} />
           <Route path={'/admin/sources'} element={<SourceManagement />} />
           <Route path={'/consultant/fetch'} element={<FetchArticles />} />
+          <Route path={'/consultant/members'} element={<ConsultantMembers />} />
           <Route path={'/consultant/fetch/:id'} element={<ArticleReview />} />
           <Route path={'/admin/industries'} element={<IndustryManagement />} />
           <Route path={'/admin/interests'} element={<InterestManagement />} />
@@ -459,6 +481,7 @@ function AppContent() {
           <Route path={'/public-articles'} element={<PublicArticles />} />
           <Route path={'/topics-of-interest'} element={<TopicsOfInterest />} />
           <Route path={'/forgot-password'} element={<ForgotPassword />} />
+          <Route path={'/reset-password'} element={<ResetPassword />} />
           <Route path={'/consultant-advice'} element={<ConsultantAdvice />} />
           <Route path={'/broadcast-analytics'} element={<BroadcastAnalytics />} />
         </Routes>

@@ -4,11 +4,12 @@ import { useNavigate } from 'react-router-dom'
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || ''
 
 const apiFetch = async (path, opts = {}) => {
+  const token = localStorage.getItem('token')
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {})
+  if (token) headers['Authorization'] = `Bearer ${token}`
   const fullPath = path.startsWith('http') ? path : `${API_BASE.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`
 
-  const fetchOpts = Object.assign({}, opts, { headers })
-  const res = await fetch(fullPath, fetchOpts)
+  const res = await fetch(fullPath, Object.assign({ headers }, opts))
   const text = await res.text().catch(() => '')
   if (!res.ok) {
     const errorMsg = `HTTP ${res.status} ${res.statusText}${text ? ': ' + text : ''}`
@@ -17,7 +18,7 @@ const apiFetch = async (path, opts = {}) => {
   try { return text ? JSON.parse(text) : null } catch (e) { return text }
 }
 
-export default function NotificationFrequency({ onComplete }) {
+export default function NotificationFrequency() {
   const navigate = useNavigate()
   const [language, setLanguage] = useState('English')
   const [frequency, setFrequency] = useState('weekly') // 'immediate', 'daily', 'weekly'
@@ -25,26 +26,77 @@ export default function NotificationFrequency({ onComplete }) {
   const [applyToAll, setApplyToAll] = useState(true)
   const [loading, setLoading] = useState(false)
 
+  // Load existing preferences on mount
+  useEffect(() => {
+    const loadPreferences = async () => {
+      try {
+        const response = await apiFetch('/api/UserControllers/me')
+        const userData = response?.data || response
+        
+        console.log('[NotificationFrequency] Full response:', response)
+        console.log('[NotificationFrequency] Loaded user data:', userData)
+        
+        // The notification data is nested in the member object
+        const memberData = userData?.member || userData?.Member
+        console.log('[NotificationFrequency] Member data:', memberData)
+        
+        // Pre-populate frequency if it exists
+        const freq = memberData?.notificationFrequency || memberData?.NotificationFrequency
+        console.log('[NotificationFrequency] Raw frequency:', freq)
+        if (freq) {
+          const normalizedFreq = freq.toLowerCase()
+          console.log('[NotificationFrequency] Pre-populating frequency:', normalizedFreq)
+          setFrequency(normalizedFreq)
+        }
+        
+        // Pre-populate notification language if it exists
+        const lang = memberData?.notificationLanguage || memberData?.NotificationLanguage
+        console.log('[NotificationFrequency] Raw notification language:', lang)
+        if (lang) {
+          const displayLang = lang === 'EN' || lang === 'en' ? 'English' : 
+                              lang === 'ZH' || lang === 'zh' ? 'Chinese' : 
+                              lang
+          console.log('[NotificationFrequency] Pre-populating notification language:', displayLang)
+          setNotificationLanguage(displayLang)
+        }
+        
+        // Pre-populate applyToAll if it exists
+        const applyAll = memberData?.applyToAllTopics ?? memberData?.ApplyToAllTopics
+        console.log('[NotificationFrequency] Raw applyToAll:', applyAll)
+        if (applyAll !== undefined) {
+          console.log('[NotificationFrequency] Pre-populating applyToAll:', applyAll)
+          setApplyToAll(applyAll)
+        }
+      } catch (err) {
+        console.error('[NotificationFrequency] Error loading preferences:', err)
+      }
+    }
+    loadPreferences()
+  }, [])
+
   const handleNext = async () => {
     setLoading(true)
     try {
-      const frequencyPreferences = {
+      const payload = {
         NotificationFrequency: frequency,
         NotificationLanguage: notificationLanguage === 'Chinese' ? 'ZH' : 'EN',
         ApplyToAllTopics: applyToAll
       }
 
-      console.log('[NotificationFrequency] Storing preferences:', frequencyPreferences)
+      console.log('[NotificationFrequency] Saving preferences:', payload)
       
-      // Store in localStorage for registration process
-      localStorage.setItem('pendingNotificationFrequency', JSON.stringify(frequencyPreferences))
+      await apiFetch('/api/UserControllers/update-notification-frequency', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
 
-      // Call the onComplete callback if provided (from PreferencesSetup)
-      if (onComplete) {
-        onComplete()
+      alert('Notification frequency saved!')
+      
+      // Check if user is a member and navigate accordingly
+      const userRole = localStorage.getItem('role')
+      if (userRole === 'member') {
+        navigate('/member/articles')
       } else {
-        // Fallback for standalone usage
-        alert('All preferences saved!')
         navigate('/landing')
       }
     } catch (err) {
@@ -56,7 +108,7 @@ export default function NotificationFrequency({ onComplete }) {
   }
 
   const handleSkip = () => {
-    navigate('/landing')
+    navigate('/member/articles')
   }
 
   const handleBack = () => {

@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { getRoleFromToken } from '../../utils/auth'
 
 // support either VITE_API_BASE or VITE_API_BASE_URL
@@ -25,43 +24,33 @@ const apiFetch = async (path, opts = {}) => {
 }
 
 export default function UserManagement() {
-  const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState('members') // 'members' or 'consultants'
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [stats, setStats] = useState({ total: 0, pending: 0, active: 0, inactive: 0 })
+  const [stats, setStats] = useState({ total: 0, active: 0, inactive: 0 })
   const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const [createForm, setCreateForm] = useState({ Name: '', Email: '', OneTimePassword: '' })
+  const [createForm, setCreateForm] = useState({ Name: '', Email: '' })
   const role = getRoleFromToken(localStorage.getItem('token'))
 
-  useEffect(() => { load() }, [activeTab])
+  useEffect(() => { load() }, [])
 
   const load = async () => {
     setLoading(true)
     try {
-      const endpoint = activeTab === 'members' ? '/api/UserControllers/members' : '/api/UserControllers/consultants'
+      const endpoint = '/api/UserControllers/consultants'
       const res = await apiFetch(endpoint)
       console.log('[load] raw response:', res)
       const list = res?.data || res || []
-      console.log('[load] full list:', list)
+      console.log('[load] list:', list)
       
       // Map fields with case-insensitive fallbacks
       const mapped = Array.isArray(list) ? list.map(u => {
-        console.log('[load] processing user:', u)
-        console.log('[load] user.interests:', u.interests)
-        console.log('[load] user.Interests:', u.Interests)
-        console.log('[load] user.interestTags:', u.interestTags)
-        console.log('[load] user.InterestTags:', u.InterestTags)
-        
         const industryStr = Array.isArray(u.industryTags) || Array.isArray(u.IndustryTags)
-          ? (u.industryTags || u.IndustryTags).map(t => t.nameEN || t.NameEN || t.name || t.Name).join(', ')
+          ? (u.industryTags || u.IndustryTags).map(t => t.name || t.Name).join(', ')
           : u.industry ?? u.Industry ?? '-'
         
         const topicsStr = Array.isArray(u.interestTags) || Array.isArray(u.InterestTags)
-          ? (u.interestTags || u.InterestTags).map(t => t.nameEN || t.NameEN || t.name || t.Name).join(', ')
-          : Array.isArray(u.interests) || Array.isArray(u.Interests)
-          ? (u.interests || u.Interests).map(t => t.nameEN || t.NameEN || t.name || t.Name).join(', ')
+          ? (u.interestTags || u.InterestTags).map(t => t.name || t.Name).join(', ')
           : u.topics ?? u.Topics ?? '-'
 
         const item = {
@@ -74,7 +63,7 @@ export default function UserManagement() {
           isActive: u.isActive ?? u.IsActive ?? true,
           avatar: u.avatar ?? u.Avatar ?? null
         }
-        console.log('[load] mapped user:', item)
+        console.log('[load] mapped user:', u, '→', item)
         return item
       }) : []
 
@@ -82,11 +71,10 @@ export default function UserManagement() {
       
       // Calculate stats
       const total = mapped.length
-      const pending = mapped.filter(u => !u.isActive).length
       const active = mapped.filter(u => u.isActive).length
       const inactive = total - active
       
-      setStats({ total, pending, active, inactive })
+      setStats({ total, active, inactive })
     } catch (e) {
       console.error('[load] error:', e)
       alert('Failed to load users: ' + e.message)
@@ -104,6 +92,21 @@ export default function UserManagement() {
     }
   }
 
+  const handleDeleteConsultant = async (consultantId) => {
+    if (!consultantId) {
+      alert('Consultant id is required')
+      return
+    }
+    if (!confirm('Delete this consultant account? This action cannot be undone.')) return
+    try {
+      const res = await apiFetch(`/api/UserControllers/delete-consultant/${encodeURIComponent(consultantId)}`, { method: 'DELETE' })
+      alert(res?.message || 'Consultant deleted successfully')
+      load()
+    } catch (e) {
+      alert('Failed to delete consultant: ' + e.message)
+    }
+  }
+
   const handleDeactivate = async (userEmail) => {
     if (!confirm('Deactivate this user account?')) return
     try {
@@ -116,8 +119,8 @@ export default function UserManagement() {
   }
 
   const handleCreateConsultant = async () => {
-    if (!createForm.Name || !createForm.Email || !createForm.OneTimePassword) {
-      alert('All fields are required')
+    if (!createForm.Name || !createForm.Email) {
+      alert('Name and Email are required')
       return
     }
 
@@ -127,17 +130,10 @@ export default function UserManagement() {
       return
     }
 
-    // Password validation (at least 6 characters)
-    if (createForm.OneTimePassword.length < 6) {
-      alert('Password must be at least 6 characters')
-      return
-    }
-
     try {
       const payload = {
         Name: createForm.Name,
-        Email: createForm.Email,
-        OneTimePassword: createForm.OneTimePassword
+        Email: createForm.Email
       }
 
       const res = await apiFetch('/api/UserControllers/create-consultant', { 
@@ -145,9 +141,9 @@ export default function UserManagement() {
         body: JSON.stringify(payload) 
       })
 
-      alert(res?.message || 'Consultant created successfully! They must change password on first login.')
+      alert(res?.message || 'Consultant created successfully. Credentials and secret key will be sent to the consultant via email.')
       setIsCreateOpen(false)
-      setCreateForm({ Name: '', Email: '', OneTimePassword: '' })
+      setCreateForm({ Name: '', Email: '' })
       load() // Reload list
     } catch (e) {
       alert('Failed to create consultant: ' + e.message)
@@ -155,7 +151,7 @@ export default function UserManagement() {
   }
 
   const openCreateModal = () => {
-    setCreateForm({ Name: '', Email: '', OneTimePassword: '' })
+    setCreateForm({ Name: '', Email: '' })
     setIsCreateOpen(true)
   }
 
@@ -170,55 +166,16 @@ export default function UserManagement() {
   return (
     <div style={{ padding: 20, background: '#f5f5f5', minHeight: '100vh' }}>
       <div style={{ marginBottom: 20 }}>
-        <h2 style={{ margin: 0, marginBottom: 8, color: '#666' }}>User Management</h2>
-        <p style={{ margin: 0, color: '#999', fontSize: 14 }}>Manage accounts for consultants & members.</p>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 24 }}>
-        <button 
-          onClick={() => setActiveTab('consultants')}
-          style={{ 
-            padding: '10px 24px', 
-            background: activeTab === 'consultants' ? '#c92b2b' : '#999',
-            color: 'white',
-            border: 'none',
-            borderTopLeftRadius: 8,
-            borderTopRightRadius: 8,
-            fontWeight: activeTab === 'consultants' ? 600 : 400,
-            cursor: 'pointer'
-          }}
-        >
-          Consultants
-        </button>
-        <button 
-          onClick={() => setActiveTab('members')}
-          style={{ 
-            padding: '10px 24px', 
-            background: activeTab === 'members' ? '#c92b2b' : '#999',
-            color: 'white',
-            border: 'none',
-            borderTopLeftRadius: 8,
-            borderTopRightRadius: 8,
-            fontWeight: activeTab === 'members' ? 600 : 400,
-            cursor: 'pointer'
-          }}
-        >
-          Members
-        </button>
+        <h2 style={{ margin: 0, marginBottom: 8, color: '#666' }}>Consultant Management</h2>
+        <p style={{ margin: 0, color: '#999', fontSize: 14 }}>Manage all consultant accounts.</p>
       </div>
 
       {/* Stats Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
         <div style={{ background: 'white', padding: 20, borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-          <div style={{ fontSize: 12, color: '#999', fontWeight: 600, marginBottom: 8 }}>Total {activeTab === 'members' ? 'Members' : 'Consultants'}</div>
+          <div style={{ fontSize: 12, color: '#999', fontWeight: 600, marginBottom: 8 }}>Total Consultants</div>
           <div style={{ fontSize: 32, fontWeight: 700, color: '#666' }}>{stats.total}</div>
-          <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>All {activeTab} accounts</div>
-        </div>
-        <div style={{ background: 'white', padding: 20, borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
-          <div style={{ fontSize: 12, color: '#999', fontWeight: 600, marginBottom: 8 }}>Pending Activation</div>
-          <div style={{ fontSize: 32, fontWeight: 700, color: '#2196F3' }}>{stats.pending}</div>
-          <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>To be activated</div>
+          <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>All consultant accounts</div>
         </div>
         <div style={{ background: 'white', padding: 20, borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
           <div style={{ fontSize: 12, color: '#999', fontWeight: 600, marginBottom: 8 }}>Active</div>
@@ -228,7 +185,7 @@ export default function UserManagement() {
         <div style={{ background: 'white', padding: 20, borderRadius: 12, boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
           <div style={{ fontSize: 12, color: '#999', fontWeight: 600, marginBottom: 8 }}>Inactive</div>
           <div style={{ fontSize: 32, fontWeight: 700, color: '#F44336' }}>{stats.inactive}</div>
-          <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>Deactivated accounts</div>
+          <div style={{ fontSize: 11, color: '#aaa', marginTop: 4 }}>Inactive accounts</div>
         </div>
       </div>
 
@@ -242,38 +199,20 @@ export default function UserManagement() {
           style={{ padding: '8px 12px', border: '1px solid #ddd', borderRadius: 6, width: 300 }}
         />
         <div style={{ display: 'flex', gap: 12 }}>
-          {activeTab === 'members' && (
-            <button 
-              onClick={() => navigate('/admin/member-analytics')}
-              style={{ 
-                padding: '8px 16px', 
-                background: '#c92b2b', 
-                color: 'white',
-                border: 'none', 
-                borderRadius: 6, 
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
-            >
-              📊 Member Analytics
-            </button>
-          )}
-          {activeTab === 'consultants' && (
-            <button 
-              onClick={openCreateModal}
-              style={{ 
-                padding: '8px 16px', 
-                background: '#c92b2b', 
-                color: 'white',
-                border: 'none', 
-                borderRadius: 6, 
-                cursor: 'pointer',
-                fontWeight: 600
-              }}
-            >
-              + Create Consultant
-            </button>
-          )}
+          <button 
+            onClick={openCreateModal}
+            style={{ 
+              padding: '8px 16px', 
+              background: '#c92b2b', 
+              color: 'white',
+              border: 'none', 
+              borderRadius: 6, 
+              cursor: 'pointer',
+              fontWeight: 600
+            }}
+          >
+            + Create Consultant
+          </button>
         </div>
       </div>
 
@@ -286,8 +225,6 @@ export default function UserManagement() {
                 <th style={{ padding: 12 }}>Avatar</th>
                 <th style={{ padding: 12 }}>Name</th>
                 <th style={{ padding: 12 }}>Email</th>
-                {activeTab === 'members' && <th style={{ padding: 12 }}>Industry</th>}
-                {activeTab === 'members' && <th style={{ padding: 12 }}>Topics of Interest</th>}
                 <th style={{ padding: 12 }}>Status</th>
                 <th style={{ padding: 12 }}>Actions</th>
               </tr>
@@ -302,22 +239,6 @@ export default function UserManagement() {
                   </td>
                   <td style={{ padding: 12 }}>{user.name}</td>
                   <td style={{ padding: 12 }}>{user.email}</td>
-                  {activeTab === 'members' && (
-                    <td style={{ padding: 12 }}>
-                      {user.industry && user.industry !== '-' ? (
-                        <span style={{ background: '#c92b2b', color: 'white', padding: '4px 12px', borderRadius: 12, fontSize: 12 }}>{user.industry}</span>
-                      ) : '-'}
-                    </td>
-                  )}
-                  {activeTab === 'members' && (
-                    <td style={{ padding: 12 }}>
-                      {user.topics && user.topics !== '-' ? (
-                        user.topics.split(',').slice(0, 2).map((t, i) => (
-                          <span key={i} style={{ background: '#f0f0f0', color: '#666', padding: '4px 8px', borderRadius: 8, fontSize: 11, marginRight: 4, display: 'inline-block', marginBottom: 4 }}>{t.trim()}</span>
-                        ))
-                      ) : '-'}
-                    </td>
-                  )}
                   <td style={{ padding: 12 }}>
                     <span style={{ 
                       color: user.isActive ? '#4CAF50' : '#F44336',
@@ -328,41 +249,58 @@ export default function UserManagement() {
                     </span>
                   </td>
                   <td style={{ padding: 12 }}>
-                    {!user.isActive ? (
-                      <button 
-                        onClick={() => handleActivate(user.email)}
-                        style={{ 
-                          background: '#4CAF50', 
-                          color: 'white', 
-                          border: 'none', 
-                          padding: '6px 16px', 
-                          borderRadius: 6, 
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {!user.isActive ? (
+                        <button 
+                          onClick={() => handleActivate(user.email)}
+                          style={{ 
+                            background: '#4CAF50', 
+                            color: 'white', 
+                            border: 'none', 
+                            padding: '6px 16px', 
+                            borderRadius: 6, 
+                            cursor: 'pointer',
+                            fontSize: 13
+                          }}
+                        >
+                          Activate
+                        </button>
+                      ) : (
+                        <button 
+                          onClick={() => handleDeactivate(user.email)}
+                          style={{ 
+                            background: '#F44336', 
+                            color: 'white', 
+                            border: 'none', 
+                            padding: '6px 16px', 
+                            borderRadius: 6, 
+                            cursor: 'pointer',
+                            fontSize: 13
+                          }}
+                        >
+                          Deactivate
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => handleDeleteConsultant(user.id)}
+                        style={{
+                          background: 'white',
+                          color: '#F44336',
+                          border: '1px solid #F44336',
+                          padding: '6px 12px',
+                          borderRadius: 6,
                           cursor: 'pointer',
                           fontSize: 13
                         }}
                       >
-                        Activate
+                        Delete
                       </button>
-                    ) : (
-                      <button 
-                        onClick={() => handleDeactivate(user.email)}
-                        style={{ 
-                          background: '#F44336', 
-                          color: 'white', 
-                          border: 'none', 
-                          padding: '6px 16px', 
-                          borderRadius: 6, 
-                          cursor: 'pointer',
-                          fontSize: 13
-                        }}
-                      >
-                        Deactivate
-                      </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))}
-              {filteredUsers.length === 0 && <tr><td colSpan={activeTab === 'members' ? 7 : 5} style={{ padding: 12, textAlign: 'center' }}>No users found.</td></tr>}
+              {filteredUsers.length === 0 && <tr><td colSpan={5} style={{ padding: 12, textAlign: 'center' }}>No consultants found.</td></tr>}
             </tbody>
           </table>
         )}
@@ -402,18 +340,8 @@ export default function UserManagement() {
                   style={{ padding: '10px 12px', border: '1px solid #ddd', borderRadius: 6, width: '100%', boxSizing: 'border-box' }}
                 />
               </div>
-              <div>
-                <label style={{ display: 'block', marginBottom: 6, fontSize: 14, fontWeight: 600 }}>One-Time Password *</label>
-                <input 
-                  type="text"
-                  placeholder="Temporary password (min 6 characters)"
-                  value={createForm.OneTimePassword}
-                  onChange={e => setCreateForm({ ...createForm, OneTimePassword: e.target.value })}
-                  style={{ padding: '10px 12px', border: '1px solid #ddd', borderRadius: 6, width: '100%', boxSizing: 'border-box' }}
-                />
-                <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                  The consultant will be required to change this password on first login.
-                </div>
+              <div style={{ fontSize: 13, color: '#666' }}>
+                Credentials (password and secret key) will be generated and emailed to the consultant.
               </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
                 <button 
