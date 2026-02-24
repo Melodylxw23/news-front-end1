@@ -43,12 +43,10 @@ const buildHeaders = () => {
 
 const join = (path) => path.startsWith('http') ? path : `${API_BASE}${path}`;
 
-// Preview recipients before sending
+// Get eligible recipients before sending
 export const previewBroadcastRecipients = async (broadcastId) => {
-  const response = await fetch(join(`/api/broadcast/preview-recipients`), {
-    method: 'POST',
-    headers: buildHeaders(),
-    body: JSON.stringify({ broadcastId })
+  const response = await fetch(join(`/api/broadcast/${broadcastId}/recipients`), {
+    headers: buildHeaders()
   });
   
   if (!response.ok) {
@@ -61,13 +59,9 @@ export const previewBroadcastRecipients = async (broadcastId) => {
 
 // Send broadcast
 export const sendBroadcast = async (broadcastId) => {
-  const response = await fetch(join(`/api/broadcast/send`), {
+  const response = await fetch(join(`/api/broadcast/${broadcastId}/send`), {
     method: 'POST',
-    headers: buildHeaders(),
-    body: JSON.stringify({ 
-      broadcastId, 
-      confirmSend: true 
-    })
+    headers: buildHeaders()
   });
   
   if (!response.ok) {
@@ -92,9 +86,9 @@ export const getBroadcastStatistics = async (broadcastId) => {
   return response.json();
 };
 
-// Get broadcast status
+// Get broadcast statistics for quick status check
 export const getBroadcastStatus = async (broadcastId) => {
-  const response = await fetch(join(`/api/broadcast/${broadcastId}/status`), {
+  const response = await fetch(join(`/api/broadcast/${broadcastId}/statistics`), {
     headers: buildHeaders()
   });
   
@@ -115,6 +109,58 @@ export const getAudienceCounts = async () => {
   if (!response.ok) {
     const errorText = await response.text();
     throw new Error(`Failed to get audience counts: ${errorText}`);
+  }
+  
+  return response.json();
+};
+
+// ========== NEW TAG-BASED TARGETING APIs ==========
+
+// Get available interest and industry tags for targeting
+export const getAvailableTags = async () => {
+  const response = await fetch(join(`/api/broadcast/targeting/available-tags`), {
+    headers: buildHeaders()
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to get available tags: ${errorText}`);
+  }
+  
+  return response.json();
+};
+
+// Preview members matching the targeting criteria
+export const previewTargetedMembers = async (interestTagIds = [], industryTagIds = []) => {
+  const params = new URLSearchParams();
+  if (Array.isArray(interestTagIds)) {
+    interestTagIds.forEach(id => params.append('interestTagIds', id));
+  }
+  if (Array.isArray(industryTagIds)) {
+    industryTagIds.forEach(id => params.append('industryTagIds', id));
+  }
+  
+  const response = await fetch(join(`/api/broadcast/targeting/preview?${params}`), {
+    headers: buildHeaders()
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to preview targeted members: ${errorText}`);
+  }
+  
+  return response.json();
+};
+
+// Get audience counts by interest and industry tags
+export const getTagStatistics = async () => {
+  const response = await fetch(join(`/api/broadcast/targeting/available-tags`), {
+    headers: buildHeaders()
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to get tag statistics: ${errorText}`);
   }
   
   return response.json();

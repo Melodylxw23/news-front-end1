@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { sendBroadcast } from '../../api/broadcast';
+import { sendBroadcast, previewTargetedMembers } from '../../api/broadcast';
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || '';
 
@@ -18,35 +18,27 @@ const getAudienceLabel = (value) => {
 };
 
 const normalizeAudience = (raw) => {
-    console.log('[normalizeAudience] input:', raw, 'type:', typeof raw);
     if (raw === null || raw === undefined) {
-        console.log('[normalizeAudience] null/undefined, returning [0]');
         return [0];
     }
     if (Array.isArray(raw)) {
-        console.log('[normalizeAudience] array, returning as-is:', raw);
         return raw;
     }
     if (typeof raw === 'number') {
         // Decode bitmask back to individual selections
         if (raw === 0) return [0];
         const selected = [];
-        console.log('[normalizeAudience] DECODING bitmask:', raw, '(binary:', raw.toString(2) + ')');
         if (raw & 2) {
             selected.push(1);
-            console.log('  [normalizeAudience] bit 2 set -> Technology (1)');
         }
         if (raw & 4) {
             selected.push(2);
-            console.log('  [normalizeAudience] bit 4 set -> Business (2)');
         }
         if (raw & 8) {
             selected.push(3);
-            console.log('  [normalizeAudience] bit 8 set -> Sports (3)');
         }
         if (raw & 16) {
             selected.push(4);
-            console.log('  [normalizeAudience] bit 16 set -> Entertainment (4)');
         }
         if (raw & 32) {
             selected.push(5);
@@ -182,28 +174,50 @@ const toAudienceEnumValue = (selected) => {
     return result || 0;
 };
 
-const normalizeDraft = (draft) => ({
-    ...draft,
-    targetAudience: normalizeAudience(draft?.targetAudience ?? draft?.TargetAudience),
-    channel: normalizeChannels(draft?.channel ?? draft?.Channel),
-    selectedArticlesCount: draft?.selectedArticlesCount ?? draft?.SelectedArticlesCount ?? 0,
-    selectedArticleIds: (() => {
-        const direct = draft?.selectedArticleIds ?? draft?.SelectedArticleIds;
-        if (Array.isArray(direct)) {
-            const ids = direct
+const normalizeDraft = (draft) => {
+    const normalized = {
+        ...draft,
+        targetAudience: normalizeAudience(draft?.targetAudience ?? draft?.TargetAudience),
+        channel: normalizeChannels(draft?.channel ?? draft?.Channel),
+        selectedArticlesCount: draft?.selectedArticlesCount ?? draft?.SelectedArticlesCount ?? 0,
+        selectedArticleIds: (() => {
+            const direct = draft?.selectedArticleIds ?? draft?.SelectedArticleIds;
+            if (Array.isArray(direct)) {
+                const ids = direct
+                    .map((v) => (typeof v === 'string' ? parseInt(v, 10) : v))
+                    .filter((v) => typeof v === 'number' && !Number.isNaN(v));
+                return Array.from(new Set(ids));
+            }
+            const raw = draft?.selectedArticles ?? draft?.SelectedArticles ?? [];
+            if (!Array.isArray(raw)) return [];
+            const ids = raw
+                .map((x) => x?.publicationDraftId ?? x?.PublicationDraftId ?? x?.id ?? x?.Id)
                 .map((v) => (typeof v === 'string' ? parseInt(v, 10) : v))
                 .filter((v) => typeof v === 'number' && !Number.isNaN(v));
             return Array.from(new Set(ids));
-        }
-        const raw = draft?.selectedArticles ?? draft?.SelectedArticles ?? [];
-        if (!Array.isArray(raw)) return [];
-        const ids = raw
-            .map((x) => x?.publicationDraftId ?? x?.PublicationDraftId ?? x?.id ?? x?.Id)
-            .map((v) => (typeof v === 'string' ? parseInt(v, 10) : v))
-            .filter((v) => typeof v === 'number' && !Number.isNaN(v));
-        return Array.from(new Set(ids));
-    })()
-});
+        })()
+    };
+    
+    // Preserve tag data - try multiple property names
+    const interestIds = draft?.selectedInterestTagIds ?? draft?.SelectedInterestTagIds ?? draft?.interestTagIds ?? draft?.InterestTagIds ?? [];
+    const industryIds = draft?.selectedIndustryTagIds ?? draft?.SelectedIndustryTagIds ?? draft?.industryTagIds ?? draft?.IndustryTagIds ?? [];
+    
+    if (Array.isArray(interestIds)) {
+        normalized.selectedInterestTagIds = interestIds.map(v => typeof v === 'string' ? parseInt(v, 10) : v).filter(v => typeof v === 'number' && !Number.isNaN(v));
+    }
+    if (Array.isArray(industryIds)) {
+        normalized.selectedIndustryTagIds = industryIds.map(v => typeof v === 'string' ? parseInt(v, 10) : v).filter(v => typeof v === 'number' && !Number.isNaN(v));
+    }
+    
+if ((normalized.selectedInterestTagIds || []).length > 0 || (normalized.selectedIndustryTagIds || []).length > 0) {
+                console.log('[normalizeDraft] Draft', draft.id, '- Tags preserved:', {
+                    interest: normalized.selectedInterestTagIds?.length || 0,
+                    industry: normalized.selectedIndustryTagIds?.length || 0
+                });
+            }
+    
+    return normalized;
+};
 
 const safeJsonParse = (text) => {
     if (!text) return null;
@@ -244,7 +258,11 @@ const DraftsList = () => {
         subject: '',
         body: '',
         channel: ['Email'],
+        // legacy array kept for backward-compat, prefer tag ids below
         targetAudience: [],
+        // New tag-based targeting
+        selectedInterestTagIds: [],
+        selectedIndustryTagIds: [],
         scheduledSendAt: '',
         selectedArticleIds: []
     });
@@ -264,10 +282,14 @@ const DraftsList = () => {
     const [tagsError, setTagsError] = useState(null);
     const [selectedIndustryTagId, setSelectedIndustryTagId] = useState('');
     const [selectedInterestTagIds, setSelectedInterestTagIds] = useState([]);
+    const [isLoadingTargetingPreview, setIsLoadingTargetingPreview] = useState(false);
+    const [previewedTargetedMembers, setPreviewedTargetedMembers] = useState(null);
+    const [targetingTagsError, setTargetingTagsError] = useState(null);
+    const [showPreviewModal, setShowPreviewModal] = useState(false);
     
     // Filter state
-    const [filterChannel, setFilterChannel] = useState('All');
-    const [filterAudience, setFilterAudience] = useState('All');
+    const [filterInterestTagIds, setFilterInterestTagIds] = useState([]);
+    const [filterIndustryTagIds, setFilterIndustryTagIds] = useState([]);
 
     useEffect(() => {
         fetchDrafts();
@@ -279,12 +301,29 @@ const DraftsList = () => {
         try {
             setTagsLoading(true);
             setTagsError(null);
-            const response = await apiFetch('/api/Broadcast/tags');
+            const response = await apiFetch('/api/broadcast/tags');
             const data = response?.data || response || {};
             const industry = Array.isArray(data?.IndustryTags) ? data.IndustryTags : (Array.isArray(data?.industryTags) ? data.industryTags : []);
             const interests = Array.isArray(data?.InterestTags) ? data.InterestTags : (Array.isArray(data?.interestTags) ? data.interestTags : []);
-            setAvailableIndustryTags(industry);
-            setAvailableInterestTags(interests);
+            // Deduplicate tags by id and normalize keys
+            const normalizeAndDedupe = (arr) => {
+                const map = new Map();
+                (arr || []).forEach((t) => {
+                    const id = t?.Id ?? t?.id;
+                    if (id === undefined || id === null) return;
+                    const existing = map.get(id) || {};
+                    map.set(id, {
+                        id,
+                        name: t?.Name ?? t?.name ?? existing.name,
+                        nameEN: t?.NameEN ?? t?.nameEN ?? t?.name ?? existing.nameEN ?? existing.name,
+                        memberCount: t?.MemberCount ?? t?.memberCount ?? existing.memberCount ?? 0
+                    });
+                });
+                return Array.from(map.values());
+            };
+
+            setAvailableIndustryTags(normalizeAndDedupe(industry));
+            setAvailableInterestTags(normalizeAndDedupe(interests));
         } catch (error) {
             console.error('[fetchTags] error:', error);
             setAvailableIndustryTags([]);
@@ -298,11 +337,11 @@ const DraftsList = () => {
     const buildPublishedArticlesUrl = (industryTagId, interestTagIds) => {
         const industry = industryTagId ? String(industryTagId) : '';
         const interests = Array.isArray(interestTagIds) ? interestTagIds.filter(Boolean) : [];
-        if (!industry && interests.length === 0) return '/api/Broadcast/published-articles';
+        if (!industry && interests.length === 0) return '/api/broadcast/published-articles';
         const params = [];
         if (industry) params.push(`industryTagId=${encodeURIComponent(industry)}`);
         interests.forEach((id) => params.push(`interestTagIds=${encodeURIComponent(String(id))}`));
-        return `/api/Broadcast/published-articles/filter?${params.join('&')}`;
+        return `/api/broadcast/published-articles/filter?${params.join('&')}`;
     };
 
     const fetchPublishedArticles = async (opts = null) => {
@@ -322,6 +361,19 @@ const DraftsList = () => {
         } finally {
             setPublishedLoading(false);
         }
+    };
+
+    // Helpers to extract tag ids from draft objects (support multiple backend shapes)
+    const getDraftInterestIds = (draft) => {
+        const raw = draft?.selectedInterestTagIds ?? draft?.SelectedInterestTagIds ?? draft?.interestTagIds ?? draft?.InterestTagIds ?? draft?.interests ?? draft?.InterestIds ?? [];
+        if (!Array.isArray(raw)) return [];
+        return raw.map(v => (typeof v === 'string' ? parseInt(v, 10) : v)).filter(v => typeof v === 'number' && !Number.isNaN(v));
+    };
+
+    const getDraftIndustryIds = (draft) => {
+        const raw = draft?.selectedIndustryTagIds ?? draft?.SelectedIndustryTagIds ?? draft?.industryTagIds ?? draft?.IndustryTagIds ?? draft?.industries ?? draft?.IndustryIds ?? [];
+        if (!Array.isArray(raw)) return [];
+        return raw.map(v => (typeof v === 'string' ? parseInt(v, 10) : v)).filter(v => typeof v === 'number' && !Number.isNaN(v));
     };
 
     const clearArticleFilters = async () => {
@@ -349,12 +401,70 @@ const DraftsList = () => {
         setEditFormData({ ...editFormData, selectedArticleIds: next });
     };
 
+    const toggleEditInterestTag = (tagId) => {
+        const idNum = typeof tagId === 'string' ? parseInt(tagId, 10) : tagId;
+        if (!idNum && idNum !== 0) return;
+        const current = Array.isArray(editFormData.selectedInterestTagIds) ? editFormData.selectedInterestTagIds : [];
+        const exists = current.includes(idNum);
+        const next = exists ? current.filter((x) => x !== idNum) : [...current, idNum];
+        setEditFormData({ ...editFormData, selectedInterestTagIds: next });
+    };
+
+    const toggleEditIndustryTag = (tagId) => {
+        const idNum = typeof tagId === 'string' ? parseInt(tagId, 10) : tagId;
+        if (!idNum && idNum !== 0) return;
+        const current = Array.isArray(editFormData.selectedIndustryTagIds) ? editFormData.selectedIndustryTagIds : [];
+        const exists = current.includes(idNum);
+        const next = exists ? current.filter((x) => x !== idNum) : [...current, idNum];
+        setEditFormData({ ...editFormData, selectedIndustryTagIds: next });
+    };
+
+    const handlePreviewTargetedMembers = async () => {
+        try {
+            setIsLoadingTargetingPreview(true);
+            setTargetingTagsError(null);
+            console.log('[handlePreviewTargetedMembers] Called with tags:', { 
+                interest: editFormData.selectedInterestTagIds, 
+                industry: editFormData.selectedIndustryTagIds 
+            });
+            const preview = await previewTargetedMembers(
+                editFormData.selectedInterestTagIds || [],
+                editFormData.selectedIndustryTagIds || []
+            );
+            console.log('[handlePreviewTargetedMembers] Response:', preview);
+            setPreviewedTargetedMembers(preview);
+        } catch (err) {
+            console.error('[handlePreviewTargetedMembers] error', err);
+            setTargetingTagsError(err?.message || 'Failed to preview targeted members');
+        } finally {
+            setIsLoadingTargetingPreview(false);
+        }
+    };
+
+    // Auto-preview when edit tags change (debounced)
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            console.log('[Preview useEffect] editingId:', editingId, 'tags:', { 
+                interest: editFormData.selectedInterestTagIds?.length, 
+                industry: editFormData.selectedIndustryTagIds?.length 
+            });
+            if (editingId && (editFormData.selectedInterestTagIds?.length > 0 || editFormData.selectedIndustryTagIds?.length > 0)) {
+                console.log('[Preview useEffect] Calling handlePreviewTargetedMembers');
+                handlePreviewTargetedMembers();
+            } else {
+                console.log('[Preview useEffect] Skipping preview - missing editingId or tags');
+                setPreviewedTargetedMembers(null);
+            }
+        }, 300);
+        return () => clearTimeout(timer);
+    }, [editFormData.selectedInterestTagIds, editFormData.selectedIndustryTagIds]);
+
     const fetchDrafts = async () => {
         try {
             setLoading(true);
             const debug = import.meta.env.DEV && localStorage.getItem('debugBroadcast') === '1';
             if (debug) console.log('[fetchDrafts] Starting fetch...');
-            const response = await apiFetch('/api/Broadcast');
+            const response = await apiFetch('/api/broadcast');
             if (debug) console.log('[fetchDrafts] Raw response:', response);
             
             const draftsData = response?.data || response || [];
@@ -377,7 +487,7 @@ const DraftsList = () => {
         
         try {
             console.log('[handleDelete] deleting:', id);
-            await apiFetch(`/api/Broadcast/${id}`, { method: 'DELETE' });
+            await apiFetch(`/api/broadcast/${id}`, { method: 'DELETE' });
             alert('Draft deleted successfully!');
             fetchDrafts();
         } catch (error) {
@@ -391,46 +501,73 @@ const DraftsList = () => {
         setEditingId(id);
         const audiences = normalizeAudience(draft.targetAudience ?? draft.TargetAudience);
         const selectedIds = Array.isArray(draft.selectedArticleIds) ? draft.selectedArticleIds : [];
+        // New tag-based fields (backend may provide these names)
+        const interestTags = Array.isArray(draft.selectedInterestTagIds) ? draft.selectedInterestTagIds : (Array.isArray(draft.SelectedInterestTagIds) ? draft.SelectedInterestTagIds : []);
+        const industryTags = Array.isArray(draft.selectedIndustryTagIds) ? draft.selectedIndustryTagIds : (Array.isArray(draft.SelectedIndustryTagIds) ? draft.SelectedIndustryTagIds : []);
+        
+        if ((interestTags || []).length > 0 || (industryTags || []).length > 0) {
+            console.log('[handleEdit] ✅ Tags loaded from list - Interest:', interestTags, 'Industry:', industryTags);
+        }
+        
         setEditFormData({
             title: draft.title || draft.Title || '',
             subject: draft.subject || draft.Subject || '',
             body: draft.body || draft.Body || '',
             channel: normalizeChannels(draft.channel ?? draft.Channel ?? 'Email'),
             targetAudience: audiences,
+            selectedInterestTagIds: interestTags,
+            selectedIndustryTagIds: industryTags,
             scheduledSendAt: formatDateTimeForInput(draft.scheduledSendAt ?? draft.ScheduledSendAt),
             selectedArticleIds: selectedIds
         });
 
-        // List DTO may not include Body/SelectedArticles; fetch detail DTO on demand.
-        if (!draft.body && !draft.Body) {
-            (async () => {
-                try {
-                    setLoadingDetailId(id);
-                    const detail = await apiFetch(`/api/Broadcast/${id}`);
-                    const payload = detail?.data || detail || {};
-                    const body = payload?.body ?? payload?.Body ?? '';
+        // ALWAYS fetch detail to ensure we have complete data (body, articles, and TAGS)
+        (async () => {
+            try {
+                setLoadingDetailId(id);
+                const detail = await apiFetch(`/api/broadcast/${id}`);
+                const payload = detail?.data || detail || {};
+                
+                const body = payload?.body ?? payload?.Body ?? '';
 
-                    const selectedArticles = payload?.selectedArticles ?? payload?.SelectedArticles ?? [];
-                    const detailSelectedIds = Array.isArray(selectedArticles)
-                        ? selectedArticles
-                            .map((x) => x?.publicationDraftId ?? x?.PublicationDraftId)
-                            .map((v) => (typeof v === 'string' ? parseInt(v, 10) : v))
-                            .filter((v) => typeof v === 'number' && !Number.isNaN(v))
-                        : [];
-
-                    setEditFormData((prev) => ({
-                        ...prev,
-                        body,
-                        selectedArticleIds: detailSelectedIds.length ? Array.from(new Set(detailSelectedIds)) : prev.selectedArticleIds
-                    }));
-                } catch (e) {
-                    console.error('[handleEdit] failed to fetch detail:', e);
-                    alert('Failed to load broadcast details: ' + (e?.message || e));
-                } finally {
-                    setLoadingDetailId(null);
+                const selectedArticles = payload?.selectedArticles ?? payload?.SelectedArticles ?? [];
+                const detailSelectedIds = Array.isArray(selectedArticles)
+                    ? selectedArticles
+                        .map((x) => x?.publicationDraftId ?? x?.PublicationDraftId)
+                        .map((v) => (typeof v === 'string' ? parseInt(v, 10) : v))
+                        .filter((v) => typeof v === 'number' && !Number.isNaN(v))
+                    : [];
+                
+                // Try multiple backend property names for tags (for compatibility)
+                const detailInterestIds = payload?.selectedInterestTagIds ?? 
+                                         payload?.SelectedInterestTagIds ?? 
+                                         payload?.interestTagIds ?? 
+                                         payload?.InterestTagIds ?? [];
+                const detailIndustryIds = payload?.selectedIndustryTagIds ?? 
+                                         payload?.SelectedIndustryTagIds ?? 
+                                         payload?.industryTagIds ?? 
+                                         payload?.IndustryTagIds ?? [];
+                
+                if ((detailInterestIds || []).length > 0 || (detailIndustryIds || []).length > 0) {
+                    console.log('[handleEdit] ✅ Tags fetched from backend - Interest:', detailInterestIds, 'Industry:', detailIndustryIds);
                 }
-            })();
-        }
+                
+                setEditFormData((prev) => {
+                    return {
+                        ...prev,
+                        body: body || prev.body,
+                        selectedArticleIds: detailSelectedIds.length ? Array.from(new Set(detailSelectedIds)) : prev.selectedArticleIds,
+                        selectedInterestTagIds: Array.isArray(detailInterestIds) && detailInterestIds.length > 0 ? detailInterestIds : prev.selectedInterestTagIds,
+                        selectedIndustryTagIds: Array.isArray(detailIndustryIds) && detailIndustryIds.length > 0 ? detailIndustryIds : prev.selectedIndustryTagIds
+                    };
+                });
+            } catch (e) {
+                console.error('[handleEdit] ❌ Failed to fetch detail:', e);
+                alert('Failed to load broadcast details: ' + (e?.message || e));
+            } finally {
+                setLoadingDetailId(null);
+            }
+        })();
     };
 
     const handleEditChange = (e) => {
@@ -440,7 +577,10 @@ const DraftsList = () => {
 
     const handleSaveEdit = async () => {
         try {
-            console.log('[handleSaveEdit] updating:', editingId, editFormData);
+            console.log('[handleSaveEdit] Saving draft:', editingId, '- Tags:', {
+                interest: editFormData.selectedInterestTagIds?.length || 0,
+                industry: editFormData.selectedIndustryTagIds?.length || 0
+            });
             
             // Validation
             if (!editFormData.title?.trim()) {
@@ -456,30 +596,43 @@ const DraftsList = () => {
                 return;
             }
             
-            const selectedAudience = editFormData.targetAudience?.length ? editFormData.targetAudience : [0];
-            const encodedAudience = toAudienceEnumValue(selectedAudience);
-            console.log('[handleSaveEdit] selectedAudience array:', selectedAudience, '-> encoded value:', encodedAudience);
-            
+            // Use new tag-based targeting when available; keep legacy TargetAudience for backward compatibility
             const channelEnumValue = toChannelEnumValue(editFormData.channel);
             const updateData = {
                 Title: editFormData.title,
                 Subject: editFormData.subject,
                 Body: editFormData.body,
                 Channel: channelEnumValue,
-                TargetAudience: encodedAudience,
+                // New tag-based targeting payload
+                selectedInterestTagIds: Array.isArray(editFormData.selectedInterestTagIds) ? editFormData.selectedInterestTagIds : [],
+                selectedIndustryTagIds: Array.isArray(editFormData.selectedIndustryTagIds) ? editFormData.selectedIndustryTagIds : [],
+                // PascalCase variants for backend compatibility
+                SelectedInterestTagIds: Array.isArray(editFormData.selectedInterestTagIds) ? editFormData.selectedInterestTagIds : [],
+                SelectedIndustryTagIds: Array.isArray(editFormData.selectedIndustryTagIds) ? editFormData.selectedIndustryTagIds : [],
+                // keep legacy field as neutral value
+                TargetAudience: 0,
                 ScheduledSendAt: editFormData.scheduledSendAt || null,
                 SelectedArticleIds: Array.isArray(editFormData.selectedArticleIds) ? editFormData.selectedArticleIds : []
             };
-            console.log('[handleSaveEdit] channel array:', editFormData.channel, '-> enum value:', channelEnumValue);
-            console.log('[handleSaveEdit] sending payload:', updateData);
-            
-            console.log('[handleSaveEdit] CRITICAL - TargetAudience value being sent:', updateData.TargetAudience, 'type:', typeof updateData.TargetAudience);
-            const response = await apiFetch(`/api/Broadcast/${editingId}`, {
+            // Log channel mapping if verbose debug enabled
+            if (import.meta.env.DEV && localStorage.getItem('debugBroadcast') === '1') {
+                console.log('[handleSaveEdit] channel array:', editFormData.channel, '-> enum value:', channelEnumValue);
+                console.log('[handleSaveEdit] payload:', updateData);
+            }
+            const response = await apiFetch(`/api/broadcast/${editingId}`, {
                 method: 'PUT',
                 body: JSON.stringify(updateData)
             });
-            console.log('[handleSaveEdit] response from backend:', response);
-            console.log('[handleSaveEdit] response TargetAudience:', response?.TargetAudience || response?.targetAudience, 'type:', typeof (response?.TargetAudience || response?.targetAudience));
+            
+            if (import.meta.env.DEV && localStorage.getItem('debugBroadcast') === '1') {
+                console.log('[handleSaveEdit] Response from backend:', response);
+                console.log('[handleSaveEdit] Response tag fields:', {
+                    selectedInterestTagIds: response?.selectedInterestTagIds,
+                    SelectedInterestTagIds: response?.SelectedInterestTagIds,
+                    selectedIndustryTagIds: response?.selectedIndustryTagIds,
+                    SelectedIndustryTagIds: response?.SelectedIndustryTagIds
+                });
+            }
             
             alert('Draft updated successfully!');
             setEditingId(null);
@@ -497,7 +650,7 @@ const DraftsList = () => {
         if (!toSend?.body && !toSend?.Body) {
             try {
                 setLoadingDetailId(draft?.id ?? draft?.Id);
-                const detail = await apiFetch(`/api/Broadcast/${draft?.id ?? draft?.Id}`);
+                const detail = await apiFetch(`/api/broadcast/${draft?.id ?? draft?.Id}`);
                 toSend = detail?.data || detail || draft;
             } catch (e) {
                 console.error('[handleSend] failed to fetch detail:', e);
@@ -563,8 +716,9 @@ const DraftsList = () => {
         try {
             console.log('[handleUnschedule] unscheduling broadcast:', draftId);
             
-            await apiFetch(`/api/broadcast/${draftId}/unschedule`, {
-                method: 'POST'
+            await apiFetch(`/api/broadcast/${draftId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ scheduledSendAt: null })
             });
             
             alert('✓ Broadcast unscheduled successfully!\n\nStatus changed back to Draft.');
@@ -579,7 +733,9 @@ const DraftsList = () => {
 
     const handleCancelEdit = () => {
         setEditingId(null);
-        setEditFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], scheduledSendAt: '', selectedArticleIds: [] });
+        setEditFormData({ title: '', subject: '', body: '', channel: ['Email'], targetAudience: [], selectedInterestTagIds: [], selectedIndustryTagIds: [], scheduledSendAt: '', selectedArticleIds: [] });
+        setPreviewedTargetedMembers(null);
+        setTargetingTagsError(null);
     };
 
     const formatDateTimeForInput = (dateString) => {
@@ -662,101 +818,226 @@ const DraftsList = () => {
                             flexWrap: 'wrap',
                             alignItems: 'flex-end'
                         }}>
-                            <div style={{ flex: '1', minWidth: '200px' }}>
-                                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
-                                    Filter by Channel
-                                </label>
-                                <select
-                                    value={filterChannel}
-                                    onChange={(e) => setFilterChannel(e.target.value)}
-                                    style={{
-                                        width: '100%',
-                                        padding: '10px',
-                                        border: '1px solid #e5e7eb',
-                                        borderRadius: '6px',
-                                        fontSize: '14px',
-                                        fontFamily: 'inherit',
-                                        background: 'white',
-                                        cursor: 'pointer'
-                                    }}
-                                >
-                                    <option value="All">All Channels</option>
-                                    <option value="Email">Email</option>
-                                </select>
-                            </div>
-                            
-                            <div style={{ flex: '1', minWidth: '200px' }}>
-                                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
-                                    Filter by Target Audience
-                                </label>
-                                <select
-                                    value={filterAudience}
-                                    onChange={(e) => setFilterAudience(e.target.value)}
-                                    style={{
-                                        width: '100%',
-                                        padding: '10px',
-                                        border: '1px solid #e5e7eb',
-                                        borderRadius: '6px',
-                                        fontSize: '14px',
-                                        fontFamily: 'inherit',
-                                        background: 'white',
-                                        cursor: 'pointer'
-                                    }}
-                                >
-                                    <option value="All">All Audiences</option>
-                                    <option value="0">All Members</option>
-                                    <option value="1">Technology</option>
-                                    <option value="2">Business</option>
-                                    <option value="3">Sports</option>
-                                    <option value="4">Entertainment</option>
-                                    <option value="5">Politics</option>
-                                </select>
-                            </div>
-                            
-                            {(filterChannel !== 'All' || filterAudience !== 'All') && (
-                                <button
-                                    onClick={() => {
-                                        setFilterChannel('All');
-                                        setFilterAudience('All');
-                                    }}
-                                    style={{
-                                        padding: '10px 16px',
-                                        background: '#f3f4f6',
-                                        color: '#333',
-                                        border: '1px solid #e5e7eb',
-                                        borderRadius: '6px',
-                                        cursor: 'pointer',
-                                        fontSize: '14px',
-                                        fontWeight: '500',
-                                        whiteSpace: 'nowrap'
-                                    }}
-                                >
-                                    Clear Filters
-                                </button>
+                            {/* Active filters summary and clear button */}
+                            {(filterInterestTagIds.length > 0 || filterIndustryTagIds.length > 0) && (
+                                <div style={{ 
+                                    flexBasis: '100%', 
+                                    marginTop: '12px', 
+                                    padding: '12px', 
+                                    background: 'linear-gradient(135deg, #fef7ff 0%, #f0f9ff 100%)', 
+                                    borderRadius: '8px', 
+                                    border: '1px solid #e2e8f0',
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'space-between',
+                                    flexWrap: 'wrap',
+                                    gap: '12px'
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span style={{ fontSize: '13px', fontWeight: '600', color: '#475569' }}>
+                                            🔍 Active Filters:
+                                        </span>
+                                        {filterInterestTagIds.length > 0 && (
+                                            <span style={{ 
+                                                padding: '2px 8px', 
+                                                background: '#dc2626', 
+                                                color: 'white', 
+                                                borderRadius: '12px', 
+                                                fontSize: '11px',
+                                                fontWeight: '600'
+                                            }}>
+                                                {filterInterestTagIds.length} Interest
+                                            </span>
+                                        )}
+                                        {filterIndustryTagIds.length > 0 && (
+                                            <span style={{ 
+                                                padding: '2px 8px', 
+                                                background: '#8b5cf6', 
+                                                color: 'white', 
+                                                borderRadius: '12px', 
+                                                fontSize: '11px',
+                                                fontWeight: '600'
+                                            }}>
+                                                {filterIndustryTagIds.length} Industry
+                                            </span>
+                                        )}
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setFilterInterestTagIds([]);
+                                            setFilterIndustryTagIds([]);
+                                        }}
+                                        style={{
+                                            background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
+                                            color: 'white',
+                                            border: 'none',
+                                            padding: '6px 14px',
+                                            borderRadius: '6px',
+                                            fontSize: '12px',
+                                            cursor: 'pointer',
+                                            fontWeight: '600',
+                                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                                            transition: 'all 0.2s ease'
+                                        }}
+                                        onMouseOver={(e) => e.target.style.transform = 'translateY(-1px)'}
+                                        onMouseOut={(e) => e.target.style.transform = 'translateY(0px)'}
+                                    >
+                                        🗑️ Clear All
+                                    </button>
+                                </div>
                             )}
+                            
+                            <div style={{ flex: '1', minWidth: '250px' }}>
+                                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
+                                    Filter by Interest Tags 
+                                    {filterInterestTagIds.length > 0 && (
+                                        <span style={{ 
+                                            marginLeft: '8px', 
+                                            padding: '1px 6px', 
+                                            background: '#dc2626', 
+                                            color: 'white', 
+                                            borderRadius: '8px', 
+                                            fontSize: '10px',
+                                            fontWeight: '600'
+                                        }}>
+                                            {filterInterestTagIds.length}
+                                        </span>
+                                    )}
+                                </label>
+                                <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', background: 'white', maxHeight: '120px', overflow: 'auto' }}>
+                                    {(availableInterestTags || []).length === 0 ? (
+                                        <div style={{ padding: '12px', color: '#666', fontSize: '13px' }}>No interest tags available</div>
+                                    ) : (
+                                        (availableInterestTags || []).map(t => {
+                                            const isSelected = filterInterestTagIds.includes(t.id);
+                                            return (
+                                                <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => {
+                                                            if (isSelected) {
+                                                                setFilterInterestTagIds(filterInterestTagIds.filter(id => id !== t.id));
+                                                            } else {
+                                                                setFilterInterestTagIds([...filterInterestTagIds, t.id]);
+                                                            }
+                                                        }}
+                                                        style={{ width: '16px', height: '16px', accentColor: '#dc2626' }}
+                                                    />
+                                                    <span style={{ fontSize: '13px', color: '#333' }}>{t.name || t.nameEN || `Interest ${t.id}`}</span>
+                                                </label>
+                                            );
+                                        })
+                                    )}
+                                </div>
+                            </div>
+                            <div style={{ flex: '1', minWidth: '250px' }}>
+                                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
+                                    Filter by Industry Tags
+                                    {filterIndustryTagIds.length > 0 && (
+                                        <span style={{ 
+                                            marginLeft: '8px', 
+                                            padding: '1px 6px', 
+                                            background: '#8b5cf6', 
+                                            color: 'white', 
+                                            borderRadius: '8px', 
+                                            fontSize: '10px',
+                                            fontWeight: '600'
+                                        }}>
+                                            {filterIndustryTagIds.length}
+                                        </span>
+                                    )}
+                                </label>
+                                <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', background: 'white', maxHeight: '120px', overflow: 'auto' }}>
+                                    {(availableIndustryTags || []).length === 0 ? (
+                                        <div style={{ padding: '12px', color: '#666', fontSize: '13px' }}>No industry tags available</div>
+                                    ) : (
+                                        (availableIndustryTags || []).map(t => {
+                                            const isSelected = filterIndustryTagIds.includes(t.id);
+                                            return (
+                                                <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f3f4f6' }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => {
+                                                            if (isSelected) {
+                                                                setFilterIndustryTagIds(filterIndustryTagIds.filter(id => id !== t.id));
+                                                            } else {
+                                                                setFilterIndustryTagIds([...filterIndustryTagIds, t.id]);
+                                                            }
+                                                        }}
+                                                        style={{ width: '16px', height: '16px', accentColor: '#8b5cf6' }}
+                                                    />
+                                                    <span style={{ fontSize: '13px', color: '#333' }}>{t.name || t.nameEN || `Industry ${t.id}`}</span>
+                                                </label>
+                                            );
+                                        })
+                                    )}
+                                </div>
+            </div>
+                            
+                            {}
                         </div>
                         
+                        {(() => {
+                            const filteredDrafts = drafts.filter(draft => {
+                                // Apply interest tag filter
+                                if ((filterInterestTagIds || []).length > 0) {
+                                    const draftInterest = getDraftInterestIds(draft);
+                                    const has = draftInterest.some(id => filterInterestTagIds.includes(id));
+                                    if (!has) return false;
+                                }
+
+                                // Apply industry tag filter
+                                if ((filterIndustryTagIds || []).length > 0) {
+                                    const draftIndustry = getDraftIndustryIds(draft);
+                                    const hasI = draftIndustry.some(id => filterIndustryTagIds.includes(id));
+                                    if (!hasI) return false;
+                                }
+                                
+                                return true;
+                            });
+                            
+                            return (
+                                <>
+                                    {/* Results counter */}
+                                    <div style={{ 
+                                        marginBottom: '16px', 
+                                        padding: '12px 16px', 
+                                        background: 'linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%)', 
+                                        borderRadius: '8px',
+                                        border: '1px solid #cbd5e1',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        flexWrap: 'wrap',
+                                        gap: '8px'
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                            <span style={{ fontSize: '14px', fontWeight: '600', color: '#475569' }}>
+                                                📋 Showing {filteredDrafts.length} of {drafts.length} draft{drafts.length !== 1 ? 's' : ''}
+                                            </span>
+                                            {filteredDrafts.length < drafts.length && (
+                                                <span style={{ 
+                                                    fontSize: '12px', 
+                                                    color: '#64748b', 
+                                                    padding: '2px 6px', 
+                                                    background: '#f1f5f9', 
+                                                    borderRadius: '4px' 
+                                                }}>
+                                                    Filtered
+                                                </span>
+                                            )}
+                                        </div>
+                                        {filteredDrafts.length === 0 && drafts.length > 0 && (
+                                            <span style={{ fontSize: '12px', color: '#dc2626', fontWeight: '500' }}>
+                                                🚫 No drafts match your current filters
+                                            </span>
+                                        )}
+                                    </div>
+                        
                         <div style={{ display: 'grid', gap: '16px' }}>
-                        {drafts.filter(draft => {
-                            // Apply channel filter
-                            if (filterChannel !== 'All') {
-                                const channels = normalizeChannels(draft.channel ?? draft.Channel);
-                                if (!channels.includes(filterChannel)) {
-                                    return false;
-                                }
-                            }
-                            
-                            // Apply audience filter
-                            if (filterAudience !== 'All') {
-                                const audiences = normalizeAudience(draft.targetAudience ?? draft.TargetAudience);
-                                const filterValue = parseInt(filterAudience);
-                                if (!audiences.includes(filterValue)) {
-                                    return false;
-                                }
-                            }
-                            
-                            return true;
-                        }).map((draft) => {
+                        {filteredDrafts.map((draft) => {
                             const audiences = normalizeAudience(draft.targetAudience ?? draft.TargetAudience);
                             const channels = normalizeChannels(draft.channel ?? draft.Channel);
                             return (
@@ -1031,7 +1312,6 @@ const DraftsList = () => {
                                                                 />
                                                                 <div>
                                                                     <div style={{ fontWeight: '600', color: '#333' }}>Email</div>
-                                                                    <div style={{ fontSize: '12px', color: '#666' }}>6,449 subscribers</div>
                                                                 </div>
                                                             </label>
                                                         );
@@ -1041,44 +1321,150 @@ const DraftsList = () => {
 
                                             <div style={{ marginBottom: '16px' }}>
                                                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
-                                                    Target Audience (Select Multiple)
+                                                    Target Audience
                                                 </label>
-                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                    {[
-                                                        { value: 0, label: 'All Members' },
-                                                        { value: 1, label: 'Technology Interested' },
-                                                        { value: 2, label: 'Business Interested' },
-                                                        { value: 3, label: 'Sports Interested' },
-                                                        { value: 4, label: 'Entertainment Interested' },
-                                                        { value: 5, label: 'Politics Interested' }
-                                                    ].map((option) => (
-                                                        <label key={option.value} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={editFormData.targetAudience.includes(option.value)}
-                                                                onChange={(e) => {
-                                                                    const checked = e.target.checked;
-                                                                    if (checked) {
-                                                                        if (option.value === 0) {
-                                                                            setEditFormData({ ...editFormData, targetAudience: [0] });
-                                                                        } else {
-                                                                            const newAudience = editFormData.targetAudience.includes(0)
-                                                                                ? [option.value]
-                                                                                : [...editFormData.targetAudience, option.value];
-                                                                            setEditFormData({ ...editFormData, targetAudience: newAudience });
-                                                                        }
-                                                                    } else {
-                                                                        setEditFormData({
-                                                                            ...editFormData,
-                                                                            targetAudience: editFormData.targetAudience.filter(v => v !== option.value)
-                                                                        });
-                                                                    }
+                                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                                                    <div>
+                                                        <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                            Interest Tags
+                                                            <span style={{ 
+                                                                padding: '2px 8px', 
+                                                                background: (editFormData.selectedInterestTagIds || []).length > 0 ? '#dc2626' : '#e5e7eb', 
+                                                                color: (editFormData.selectedInterestTagIds || []).length > 0 ? 'white' : '#666',
+                                                                borderRadius: '12px', 
+                                                                fontSize: '11px',
+                                                                fontWeight: '600'
+                                                            }}>
+                                                                {(editFormData.selectedInterestTagIds || []).length} selected
+                                                            </span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    const allIds = availableInterestTags.map(t => t?.Id ?? t?.id);
+                                                                    const isAllSelected = allIds.every(id => (editFormData.selectedInterestTagIds || []).includes(id));
+                                                                    setEditFormData({
+                                                                        ...editFormData,
+                                                                        selectedInterestTagIds: isAllSelected ? [] : allIds
+                                                                    });
                                                                 }}
-                                                                style={{ cursor: 'pointer', width: '18px', height: '18px' }}
-                                                            />
-                                                            <span style={{ fontSize: '14px', color: '#333' }}>{option.label}</span>
-                                                        </label>
-                                                    ))}
+                                                                style={{
+                                                                    padding: '2px 8px',
+                                                                    fontSize: '11px',
+                                                                    fontWeight: '600',
+                                                                    background: '#f3f4f6',
+                                                                    border: '1px solid #e5e7eb',
+                                                                    borderRadius: '4px',
+                                                                    cursor: 'pointer',
+                                                                    marginLeft: '4px'
+                                                                }}
+                                                            >
+                                                                {availableInterestTags.every(t => (editFormData.selectedInterestTagIds || []).includes(t?.Id ?? t?.id)) ? 'Clear' : 'All'}
+                                                            </button>
+                                                        </div>
+                                                        <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px', background: '#fafafa', maxHeight: '200px', overflow: 'auto' }}>
+                                                            {tagsLoading ? (
+                                                                <div style={{ fontSize: '13px', color: '#666' }}>Loading tags...</div>
+                                                            ) : (availableInterestTags.length === 0 ? (
+                                                                <div style={{ fontSize: '13px', color: '#666' }}>No interest tags available.</div>
+                                                            ) : (
+                                                                availableInterestTags.map((t) => {
+                                                                    const id = t?.Id ?? t?.id;
+                                                                    const name = t?.Name ?? t?.name ?? `Interest ${id}`;
+                                                                    const checked = (editFormData.selectedInterestTagIds || []).includes(id);
+                                                                    return (
+                                                                        <label key={id} style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px', color: '#111827', cursor: 'pointer', padding: '6px 0' }}>
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={checked}
+                                                                                onChange={() => toggleEditInterestTag(id)}
+                                                                                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                                                            />
+                                                                            <span>{name}</span>
+                                                                        </label>
+                                                                    );
+                                                                })
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    <div>
+                                                        <div style={{ fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#333', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                            Industry Tags
+                                                            <span style={{ 
+                                                                padding: '2px 8px', 
+                                                                background: (editFormData.selectedIndustryTagIds || []).length > 0 ? '#8b5cf6' : '#e5e7eb', 
+                                                                color: (editFormData.selectedIndustryTagIds || []).length > 0 ? 'white' : '#666',
+                                                                borderRadius: '12px', 
+                                                                fontSize: '11px',
+                                                                fontWeight: '600'
+                                                            }}>
+                                                                {(editFormData.selectedIndustryTagIds || []).length} selected
+                                                            </span>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    const allIds = availableIndustryTags.map(t => t?.Id ?? t?.id);
+                                                                    const isAllSelected = allIds.every(id => (editFormData.selectedIndustryTagIds || []).includes(id));
+                                                                    setEditFormData({
+                                                                        ...editFormData,
+                                                                        selectedIndustryTagIds: isAllSelected ? [] : allIds
+                                                                    });
+                                                                }}
+                                                                style={{
+                                                                    padding: '2px 8px',
+                                                                    fontSize: '11px',
+                                                                    fontWeight: '600',
+                                                                    background: '#f3f4f6',
+                                                                    border: '1px solid #e5e7eb',
+                                                                    borderRadius: '4px',
+                                                                    cursor: 'pointer',
+                                                                    marginLeft: '4px'
+                                                                }}
+                                                            >
+                                                                {availableIndustryTags.every(t => (editFormData.selectedIndustryTagIds || []).includes(t?.Id ?? t?.id)) ? 'Clear' : 'All'}
+                                                            </button>
+                                                        </div>
+                                                        <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '10px', background: '#fafafa', maxHeight: '200px', overflow: 'auto' }}>
+                                                            {tagsLoading ? (
+                                                                <div style={{ fontSize: '13px', color: '#666' }}>Loading tags...</div>
+                                                            ) : (availableIndustryTags.length === 0 ? (
+                                                                <div style={{ fontSize: '13px', color: '#666' }}>No industry tags available.</div>
+                                                            ) : (
+                                                                availableIndustryTags.map((t) => {
+                                                                    const id = t?.Id ?? t?.id;
+                                                                    const name = t?.Name ?? t?.name ?? `Industry ${id}`;
+                                                                    const checked = (editFormData.selectedIndustryTagIds || []).includes(id);
+                                                                    return (
+                                                                        <label key={id} style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px', color: '#111827', cursor: 'pointer', padding: '6px 0' }}>
+                                                                            <input
+                                                                                type="checkbox"
+                                                                                checked={checked}
+                                                                                onChange={() => toggleEditIndustryTag(id)}
+                                                                                style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                                                                            />
+                                                                            <span>{name}</span>
+                                                                        </label>
+                                                                    );
+                                                                })
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', flexDirection: 'column', gap: '8px' }}>
+                                                    {(editFormData.selectedInterestTagIds?.length || 0) + (editFormData.selectedIndustryTagIds?.length || 0) > 0 ? (
+                                                        <>
+                                                            <div style={{ padding: '10px 14px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #86efac', fontSize: '13px', fontWeight: '600', color: '#166534' }}>
+                                                                👥 Total Members: {isLoadingTargetingPreview
+                                                                    ? 'Loading...'
+                                                                    : (previewedTargetedMembers?.totalMembersMatched ?? previewedTargetedMembers?.totalCount ?? 0).toLocaleString()}
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <div style={{ padding: '10px 14px', background: '#f3f4f6', borderRadius: '6px', fontSize: '13px', color: '#666' }}>
+                                                            Select tags to see member count
+                                                        </div>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -1168,49 +1554,55 @@ const DraftsList = () => {
                                                         <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>
                                                             {draft.subject}
                                                         </p>
+                                                        {/* Tag badges */}
+                                                        {(() => {
+                                                            const interestIds = getDraftInterestIds(draft);
+                                                            const industryIds = getDraftIndustryIds(draft);
+                                                            const hasAnyTags = interestIds.length > 0 || industryIds.length > 0;
+                                                            
+                                                            if (!hasAnyTags) return null;
+                                                            
+                                                            return (
+                                                                <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                                                    {interestIds.map((id) => {
+                                                                        const tag = (availableInterestTags || []).find(t => t.id === id);
+                                                                        const name = tag?.name || tag?.nameEN || `Interest #${id}`;
+                                                                        return (
+                                                                            <span key={`dint-${draft.id}-${id}`} style={{ 
+                                                                                padding: '3px 8px', 
+                                                                                background: '#fef2f2', 
+                                                                                color: '#dc2626', 
+                                                                                borderRadius: '12px', 
+                                                                                fontSize: '11px', 
+                                                                                fontWeight: '500',
+                                                                                border: '1px solid #fecaca'
+                                                                            }}>
+                                                                                🏷️ {name}
+                                                                            </span>
+                                                                        );
+                                                                    })}
+                                                                    {industryIds.map((id) => {
+                                                                        const tag = (availableIndustryTags || []).find(t => t.id === id);
+                                                                        const name = tag?.name || tag?.nameEN || `Industry #${id}`;
+                                                                        return (
+                                                                            <span key={`dind-${draft.id}-${id}`} style={{ 
+                                                                                padding: '3px 8px', 
+                                                                                background: '#f3e8ff', 
+                                                                                color: '#8b5cf6', 
+                                                                                borderRadius: '12px', 
+                                                                                fontSize: '11px', 
+                                                                                fontWeight: '500',
+                                                                                border: '1px solid #d8b4fe'
+                                                                            }}>
+                                                                                🏢 {name}
+                                                                            </span>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </div>
-                                                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center', flexWrap: 'wrap' }}>
-                                                        {channels.map((ch) => (
-                                                            <span key={ch} style={{
-                                                                display: 'inline-block',
-                                                                padding: '4px 12px',
-                                                                background: '#dbeafe',
-                                                                color: '#1e40af',
-                                                                borderRadius: '4px',
-                                                                fontSize: '12px',
-                                                                fontWeight: '500'
-                                                            }}>
-                                                                📧 Email
-                                                            </span>
-                                                        ))}
-                                                        {audiences.includes(0) ? (
-                                                            <span style={{
-                                                                display: 'inline-block',
-                                                                padding: '4px 12px',
-                                                                background: '#f3e8ff',
-                                                                color: '#7e22ce',
-                                                                borderRadius: '4px',
-                                                                fontSize: '12px',
-                                                                fontWeight: '500'
-                                                            }}>
-                                                                👥 All Members
-                                                            </span>
-                                                        ) : (
-                                                            audiences.map((audienceVal) => (
-                                                                <span key={audienceVal} style={{
-                                                                    display: 'inline-block',
-                                                                    padding: '4px 12px',
-                                                                    background: '#f3e8ff',
-                                                                    color: '#7e22ce',
-                                                                    borderRadius: '4px',
-                                                                    fontSize: '12px',
-                                                                    fontWeight: '500'
-                                                                }}>
-                                                                    👥 {getAudienceLabel(audienceVal)}
-                                                                </span>
-                                                            ))
-                                                        )}
-                                                    </div>
+                                                    {/* Removed channel and audience badges per user request */}
                                                 </div>
                                                 <p style={{ fontSize: '13px', color: '#666', margin: '12px 0 0 0', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
                                                     {draft.body ? (
@@ -1342,9 +1734,55 @@ const DraftsList = () => {
                             );
                         })}
                         </div>
+                                </>
+                            );
+                        })()}
                     </div>
                 )}
             </div>
+
+            {/* Preview Modal */}
+            {showPreviewModal && previewedTargetedMembers && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60 }} onClick={() => setShowPreviewModal(false)}>
+                    <div style={{ width: 'min(1000px, 95%)', maxHeight: '80vh', overflow: 'auto', background: 'white', borderRadius: '10px', padding: '18px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                            <h2 style={{ margin: 0, fontSize: '18px' }}>Recipient Preview</h2>
+                            <button onClick={() => setShowPreviewModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '18px' }}>✖️</button>
+                        </div>
+
+                        <div style={{ marginBottom: '12px' }}>
+                            <div style={{ fontSize: '14px', fontWeight: '600' }}>Total matched: {previewedTargetedMembers.totalMembersMatched?.toLocaleString() || 0}</div>
+                            <div style={{ fontSize: '13px', color: '#16a34a' }}>Sample size: {previewedTargetedMembers.sampleSize || 0}</div>
+                        </div>
+
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                            {(previewedTargetedMembers.recipients || previewedTargetedMembers.data?.recipients || previewedTargetedMembers.sampleMembers || []).map((member, i) => (
+                                <div key={member?.id ?? member?.memberId ?? i} style={{ padding: '12px', borderRadius: '8px', border: '1px solid #e5e7eb', background: '#fafafa' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div style={{ fontWeight: '700' }}>{member.contactPerson || member.name || member.fullName || member.memberName || 'N/A'}</div>
+                                        <div style={{ fontSize: '12px', color: '#666' }}>{member.email || member.contactEmail || member.emailAddress || ''}</div>
+                                    </div>
+                                    <div style={{ fontSize: '13px', color: '#666', marginTop: '6px' }}>{member.companyName || member.company || ''}</div>
+                                    {(member.interestTagNames || member.interests || member.interestTags || []).length > 0 && (
+                                        <div style={{ marginTop: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                            {(member.interestTagNames || member.interests || member.interestTags || []).map((t, j) => (
+                                                <span key={`int-${i}-${j}`} style={{ padding: '2px 6px', background: '#fef2f2', color: '#dc2626', borderRadius: '3px', fontSize: '12px' }}>{t}</span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {(member.industryTagNames || member.industries || member.industryTags || []).length > 0 && (
+                                        <div style={{ marginTop: '6px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                            {(member.industryTagNames || member.industries || member.industryTags || []).map((t, j) => (
+                                                <span key={`ind-${i}-${j}`} style={{ padding: '2px 6px', background: '#f3e8ff', color: '#8b5cf6', borderRadius: '3px', fontSize: '12px' }}>{t}</span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

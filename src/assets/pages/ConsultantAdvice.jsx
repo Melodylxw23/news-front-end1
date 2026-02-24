@@ -25,6 +25,16 @@ const ConsultantAdvice = () => {
     const [sendNowError, setSendNowError] = useState('');
     const [sendNowOk, setSendNowOk] = useState('');
     const [previewGenerated, setPreviewGenerated] = useState(false);
+
+    // Editable preview content
+    const [editableContent, setEditableContent] = useState({
+        executiveSummary: '',
+        keyDevelopments: [],
+        opportunities: [],
+        watchouts: [],
+        recommendedActions: []
+    });
+    const [isEditing, setIsEditing] = useState(false);
     
     // Form state
     const [formData, setFormData] = useState({
@@ -32,7 +42,8 @@ const ConsultantAdvice = () => {
         industries: [],
         frequency: 'daily', // daily, weekly
         email: '',
-        preferredTime: '09:00' // Time of day to receive insights
+        preferredTime: '09:00', // Time of day to receive insights
+        language: 'english' // Language preference: english, chinese
     });
 
     const hasSelectedPreferences = formData.territories.length > 0 && formData.industries.length > 0;
@@ -63,22 +74,47 @@ const ConsultantAdvice = () => {
     ];
 
     useEffect(() => {
-        // Load user's email from localStorage or profile
+        // Load user's email from localStorage
         const user = JSON.parse(localStorage.getItem('user') || '{}');
+        const token = localStorage.getItem('token');
+        
+        console.log('[ConsultantAdvice] User from localStorage:', user);
+        console.log('[ConsultantAdvice] Token exists:', !!token);
+        
         if (user.email) {
+            console.log('[ConsultantAdvice] Loaded email:', user.email);
             setFormData(prev => ({ ...prev, email: user.email }));
+        } else {
+            console.warn('[ConsultantAdvice] No email found in user object. Keys:', Object.keys(user));
         }
         
         // Load existing preferences if available
         loadPreferences();
+
+        // Set up daily auto-generation at preferred time
+        const checkAndGenerateDaily = () => {
+            loadEditableContent();
+        };
+
+        // Check every minute if we should generate
+        const interval = setInterval(checkAndGenerateDaily, 60000);
+        return () => clearInterval(interval);
     }, []);
 
-    const loadPreview = async () => {
+    // Auto-load editable content when preferences are selected
+    useEffect(() => {
+        if (hasSelectedPreferences && !previewGenerated) {
+            loadEditableContent();
+        }
+    }, [hasSelectedPreferences]);
+
+    const loadEditableContent = async () => {
         try {
             setPreviewLoading(true);
             setPreviewError('');
             const token = localStorage.getItem('token');
-            const response = await fetch(apiUrl('/api/consultant/insights/preview'), {
+            
+            const response = await fetch(apiUrl('/api/consultant/insights/generate-editable'), {
                 headers: {
                     'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
@@ -86,16 +122,33 @@ const ConsultantAdvice = () => {
             });
 
             if (!response.ok) {
-                const text = await response.text().catch(() => '');
-                throw new Error(text || `Failed to load preview (${response.status})`);
+                let errorMsg = '';
+                try {
+                    const errorBody = await response.json();
+                    errorMsg = errorBody.message || JSON.stringify(errorBody);
+                } catch {
+                    errorMsg = await response.text();
+                }
+                console.error('[loadEditableContent] Response error:', response.status, errorMsg);
+                throw new Error(`Failed to load insights (${response.status}): ${errorMsg}`);
             }
 
             const data = await response.json();
-            setPreview(data);
+            
+            // Data comes as structured JSON: executiveSummary, keyDevelopments[], etc.
+            setEditableContent({
+                executiveSummary: data.executiveSummary || '',
+                keyDevelopments: data.keyDevelopments || [],
+                opportunities: data.opportunities || [],
+                watchouts: data.watchouts || [],
+                recommendedActions: data.recommendedActions || []
+            });
+            
             setPreviewGenerated(true);
+            setIsEditing(true); // Start in edit mode ready for user edits
         } catch (error) {
-            console.error('[loadPreview] Error:', error);
-            setPreviewError(error.message || 'Failed to load preview');
+            console.error('[loadEditableContent] Error:', error);
+            setPreviewError(error.message || 'Failed to load editable content');
         } finally {
             setPreviewLoading(false);
         }
@@ -109,10 +162,15 @@ const ConsultantAdvice = () => {
 
             const token = localStorage.getItem('token');
             const body = {
+                executiveSummary: editableContent.executiveSummary,
+                keyDevelopments: editableContent.keyDevelopments.filter(item => item.trim()), // Exclude empty items
+                opportunities: editableContent.opportunities.filter(item => item.trim()),
+                watchouts: editableContent.watchouts.filter(item => item.trim()),
+                recommendedActions: editableContent.recommendedActions.filter(item => item.trim()),
                 force: false
             };
 
-            const response = await fetch(apiUrl('/api/consultant/insights/send-now'), {
+            const response = await fetch(apiUrl('/api/consultant/insights/send-edited'), {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -122,19 +180,62 @@ const ConsultantAdvice = () => {
             });
 
             if (!response.ok) {
-                const text = await response.text().catch(() => '');
-                throw new Error(text || `Send failed (${response.status})`);
+                let errorDetails = '';
+                try {
+                    const errorBody = await response.json();
+                    errorDetails = errorBody.message || JSON.stringify(errorBody);
+                } catch {
+                    errorDetails = await response.text();
+                }
+                throw new Error(errorDetails || `Send failed (${response.status})`);
             }
 
-            // backend may return JSON or empty
             const result = await response.json().catch(() => null);
-            setSendNowOk(result?.message || '✓ Sent! Check your inbox.');
+            setSendNowOk(result?.message || '✓ Insights sent successfully! Check your inbox.');
+            
+            // Reset after success
+            setTimeout(() => {
+                setPreviewGenerated(false);
+                setIsEditing(false);
+                setEditableContent({
+                    executiveSummary: '',
+                    keyDevelopments: [],
+                    opportunities: [],
+                    watchouts: [],
+                    recommendedActions: []
+                });
+            }, 2000);
         } catch (error) {
             console.error('[handleSendNow] Error:', error);
             setSendNowError(error.message || 'Failed to send');
         } finally {
             setSendNowLoading(false);
         }
+    };
+
+    const updateEditableField = (field, value) => {
+        setEditableContent(prev => ({ ...prev, [field]: value }));
+    };
+
+    const updateEditableListItem = (field, index, value) => {
+        setEditableContent(prev => ({
+            ...prev,
+            [field]: prev[field].map((item, i) => i === index ? value : item)
+        }));
+    };
+
+    const addListItem = (field) => {
+        setEditableContent(prev => ({
+            ...prev,
+            [field]: [...prev[field], '']
+        }));
+    };
+
+    const removeListItem = (field, index) => {
+        setEditableContent(prev => ({
+            ...prev,
+            [field]: prev[field].filter((_, i) => i !== index)
+        }));
     };
 
     const loadPreferences = async () => {
@@ -156,7 +257,8 @@ const ConsultantAdvice = () => {
                         industries: data.industries || data.Industries || [],
                         frequency: data.frequency || data.Frequency || 'daily',
                         email: data.email || data.Email || formData.email,
-                        preferredTime: data.preferredTime || data.PreferredTime || '09:00'
+                        preferredTime: data.preferredTime || data.PreferredTime || '09:00',
+                        language: data.language || data.Language || 'english'
                     });
                 }
             }
@@ -199,6 +301,11 @@ const ConsultantAdvice = () => {
             return;
         }
 
+        if (!formData.email || !formData.email.trim()) {
+            alert('Email address is required. Please log in or check your profile.');
+            return;
+        }
+
         try {
             setSaving(true);
             const token = localStorage.getItem('token');
@@ -208,7 +315,8 @@ const ConsultantAdvice = () => {
                 Industries: formData.industries,
                 Frequency: formData.frequency,
                 Email: formData.email,
-                PreferredTime: formData.preferredTime
+                PreferredTime: formData.preferredTime,
+                Language: formData.language
             };
 
             console.log('[handleSubmit] Saving preferences:', payload);
@@ -450,21 +558,22 @@ const ConsultantAdvice = () => {
                                 <input
                                     type="email"
                                     value={formData.email}
+                                    placeholder={!formData.email ? 'Email not loaded' : ''}
                                     readOnly
                                     style={{
                                         width: '100%',
                                         padding: '12px',
-                                        border: '1px solid #e5e7eb',
+                                        border: !formData.email ? '1px solid #ef4444' : '1px solid #e5e7eb',
                                         borderRadius: '6px',
                                         fontSize: '14px',
                                         boxSizing: 'border-box',
-                                        background: '#f9fafb',
-                                        color: '#6b7280',
+                                        background: !formData.email ? '#fee2e2' : '#f9fafb',
+                                        color: !formData.email ? '#991b1b' : '#6b7280',
                                         cursor: 'not-allowed'
                                     }}
                                 />
-                                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                                    📧 Insights will be sent to your registered email address
+                                <div style={{ fontSize: '12px', color: !formData.email ? '#991b1b' : '#6b7280', marginTop: '4px' }}>
+                                    {!formData.email ? '❌ Email not loaded. Please log in again.' : '📧 Insights will be sent to your registered email address'}
                                 </div>
                             </div>
 
@@ -552,6 +661,54 @@ const ConsultantAdvice = () => {
                                     <option value="18:00">6:00 PM - Evening</option>
                                 </select>
                             </div>
+
+                            {/* Language Preference */}
+                            <div>
+                                <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '8px' }}>
+                                    Insight Language
+                                </label>
+                                <div style={{ display: 'flex', gap: '12px' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, language: 'english' }))}
+                                        style={{
+                                            flex: 1,
+                                            padding: '16px',
+                                            background: formData.language === 'english' ? '#dc2626' : 'white',
+                                            color: formData.language === 'english' ? 'white' : '#374151',
+                                            border: formData.language === 'english' ? '2px solid #dc2626' : '2px solid #e5e7eb',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            fontSize: '15px',
+                                            fontWeight: '500',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        <div style={{ fontSize: '24px', marginBottom: '8px' }}>EN</div>
+                                        <div>English</div>
+                                    </button>
+                                    
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, language: 'chinese' }))}
+                                        style={{
+                                            flex: 1,
+                                            padding: '16px',
+                                            background: formData.language === 'chinese' ? '#dc2626' : 'white',
+                                            color: formData.language === 'chinese' ? 'white' : '#374151',
+                                            border: formData.language === 'chinese' ? '2px solid #dc2626' : '2px solid #e5e7eb',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            fontSize: '15px',
+                                            fontWeight: '500',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        <div style={{ fontSize: '24px', marginBottom: '8px' }}>🇨🇳</div>
+                                        <div>中文 (Chinese)</div>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -581,8 +738,11 @@ const ConsultantAdvice = () => {
                                 <div style={{ marginBottom: '8px' }}>
                                     <strong>Frequency:</strong> {formData.frequency === 'daily' ? 'Daily (Monday-Friday)' : 'Weekly (Every Monday)'}
                                 </div>
-                                <div>
+                                <div style={{ marginBottom: '8px' }}>
                                     <strong>Delivery Time:</strong> {formData.preferredTime} (SGT)
+                                </div>
+                                <div>
+                                    <strong>Language:</strong> {formData.language === 'english' ? 'English (EN)' : '中文 (Chinese)'}
                                 </div>
                             </div>
                         </div>
@@ -632,57 +792,40 @@ const ConsultantAdvice = () => {
                     </div>
                 </form>
 
-                {/* Help Section */}
-                <div style={{
-                    background: '#fffbeb',
-                    border: '1px solid #fef3c7',
-                    padding: '20px',
-                    borderRadius: '12px',
-                    marginTop: '24px'
-                }}>
-                    <h3 style={{ fontSize: '16px', fontWeight: '600', color: '#92400e', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span>💡</span> What to Expect
-                    </h3>
-                    <ul style={{ margin: 0, paddingLeft: '20px', color: '#92400e', fontSize: '14px', lineHeight: '1.8' }}>
-                        <li>Curated news summaries in 3-5 bullet points per insight</li>
-                        <li>Policy updates and regulatory changes for selected territories</li>
-                        <li>Industry trends and market developments</li>
-                        <li>Business opportunities and success stories</li>
-                        <li>Key statistics and economic indicators</li>
-                    </ul>
-                </div>
-
                 {/* Insights Preview (shown after preferences are selected) */}
                 {hasSelectedPreferences && (
                     <div style={{ background: 'white', padding: '32px', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)', marginTop: '32px', border: '1px solid #f3f4f6' }}>
                         <div style={{ textAlign: 'center', marginBottom: previewGenerated ? '24px' : '0' }}>
                             <h2 style={{ fontSize: '24px', fontWeight: '700', color: '#333', margin: '0 0 12px 0' }}>
-                                ✉️ Insights Email Preview
+                                ✉️ Your Insights Preview
                             </h2>
                             <p style={{ fontSize: '15px', color: '#6b7280', margin: '0 0 24px 0', lineHeight: '1.6' }}>
-                                Generate a preview of your next insights digest based on your selected territories and industries.
+                                {previewLoading ? 'Generating your personalized insights...' : 'Review and customize your insights before sending'}
                             </p>
-                            
-                            {!previewGenerated && (
-                                <button
-                                    type="button"
-                                    onClick={loadPreview}
-                                    disabled={previewLoading}
-                                    style={{
-                                        padding: '16px 32px',
-                                        background: previewLoading ? '#9ca3af' : '#dc2626',
-                                        color: 'white',
-                                        border: 'none',
-                                        borderRadius: '8px',
-                                        cursor: previewLoading ? 'not-allowed' : 'pointer',
-                                        fontSize: '16px',
-                                        fontWeight: '700',
-                                        transition: 'all 0.2s',
-                                        boxShadow: '0 4px 8px rgba(220, 38, 38, 0.3)'
-                                    }}
-                                >
-                                    {previewLoading ? '⏳ Generating...' : '🎯 Generate Preview'}
-                                </button>
+
+                            {/* Auto-generation Info */}
+                            <div style={{
+                                background: '#ecfdf5',
+                                border: '1px solid #a7f3d0',
+                                borderRadius: '8px',
+                                padding: '12px 16px',
+                                marginBottom: '24px',
+                                fontSize: '13px',
+                                color: '#065f46',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                justifyContent: 'center'
+                            }}>
+                                <span>🔄</span>
+                                <span><strong>Auto-preview enabled:</strong> Insights are auto-generated daily</span>
+                            </div>
+
+                            {previewLoading && (
+                                <div style={{ textAlign: 'center', padding: '24px' }}>
+                                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>⏳</div>
+                                    <p style={{ color: '#6b7280', fontSize: '14px' }}>Generating your personalized insights...</p>
+                                </div>
                             )}
                         </div>
 
@@ -740,51 +883,370 @@ const ConsultantAdvice = () => {
 
                         {previewGenerated && (
                             <div>
-                                <div style={{ 
-                                    background: '#f1f5f9', 
-                                    padding: '16px 20px', 
-                                    borderRadius: '8px 8px 0 0',
-                                    border: '1px solid #e2e8f0',
-                                    borderBottom: 'none'
-                                }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                        <div style={{ fontSize: '14px', color: '#334155', fontWeight: '600' }}>
-                                            <span style={{ color: '#64748b', fontWeight: 'normal' }}>Subject:</span> {preview?.subject || preview?.Subject || 'Loading subject...'}
-                                        </div>
-                                        <div style={{ fontSize: '13px', color: '#64748b', fontStyle: 'italic' }}>
-                                            Generated: {preview?.generatedAtUtc || preview?.GeneratedAtUtc || '—'}
-                                        </div>
-                                    </div>
+                                {/* Edit Mode Toggle */}
+                                <div style={{ marginBottom: '20px', textAlign: 'right' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsEditing(!isEditing)}
+                                        style={{
+                                            padding: '10px 20px',
+                                            background: isEditing ? '#7c3aed' : '#f59e0b',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '6px',
+                                            cursor: 'pointer',
+                                            fontSize: '14px',
+                                            fontWeight: '600',
+                                            transition: 'all 0.2s'
+                                        }}
+                                    >
+                                        {isEditing ? '✓ Done Editing' : '✏️ Edit Content'}
+                                    </button>
                                 </div>
 
-                                <div style={{ 
-                                    border: '1px solid #e2e8f0', 
-                                    borderRadius: '0 0 8px 8px', 
-                                    overflow: 'hidden', 
-                                    background: '#fff',
-                                    boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
-                                    marginBottom: '20px'
-                                }}>
-                                    <iframe
-                                        title="Consultant insights preview"
-                                        sandbox="allow-same-origin"
-                                        srcDoc={preview?.htmlBody || preview?.HtmlBody || '<div style="padding:24px;font-family:system-ui;color:#6b7280;text-align:center;"><div style="font-size:48px;margin-bottom:16px;">📧</div><div>Loading preview…</div></div>'}
-                                        style={{ width: '100%', height: '480px', border: 'none', background: 'white', display: 'block' }}
-                                    />
-                                </div>
+                                {/* Edit Mode UI */}
+                                {isEditing && (
+                                    <div style={{ 
+                                        background: '#fffbeb', 
+                                        border: '2px solid #f59e0b', 
+                                        borderRadius: '12px', 
+                                        padding: '24px',
+                                        marginBottom: '24px'
+                                    }}>
+                                        <h3 style={{ marginTop: 0, color: '#d97706', fontSize: '18px', fontWeight: '600' }}>
+                                            📝 Edit Insights Before Sending
+                                        </h3>
+                                        <p style={{ color: '#92400e', fontSize: '14px', margin: '0 0 24px 0' }}>
+                                            Customize the insights to match your needs. Changes will be sent when you click "Send Now".
+                                        </p>
+
+                                        {/* Executive Summary */}
+                                        <div style={{ marginBottom: '24px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                                                Executive Summary
+                                            </label>
+                                            <textarea
+                                                value={editableContent.executiveSummary}
+                                                onChange={(e) => updateEditableField('executiveSummary', e.target.value)}
+                                                style={{
+                                                    width: '100%',
+                                                    padding: '12px',
+                                                    border: '1px solid #fcd34d',
+                                                    borderRadius: '6px',
+                                                    fontSize: '14px',
+                                                    fontFamily: 'inherit',
+                                                    boxSizing: 'border-box',
+                                                    minHeight: '100px',
+                                                    resize: 'vertical'
+                                                }}
+                                            />
+                                        </div>
+
+                                        {/* Key Developments */}
+                                        <div style={{ marginBottom: '24px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                                                Key Developments
+                                            </label>
+                                            {editableContent.keyDevelopments.map((item, idx) => (
+                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>📌</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <textarea
+                                                            value={item}
+                                                            onChange={(e) => updateEditableListItem('keyDevelopments', idx, e.target.value)}
+                                                            style={{
+                                                                width: '100%',
+                                                                padding: '10px',
+                                                                border: '1px solid #fcd34d',
+                                                                borderRadius: '6px',
+                                                                fontSize: '13px',
+                                                                boxSizing: 'border-box',
+                                                                fontFamily: 'inherit'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={() => removeListItem('keyDevelopments', idx)}
+                                                        style={{
+                                                            padding: '8px 12px',
+                                                            background: '#fee2e2',
+                                                            color: '#991b1b',
+                                                            border: '1px solid #fca5a5',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '12px',
+                                                            fontWeight: '600'
+                                                        }}
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button
+                                                onClick={() => addListItem('keyDevelopments')}
+                                                style={{
+                                                    padding: '8px 12px',
+                                                    background: '#dbeafe',
+                                                    color: '#1e40af',
+                                                    border: 'none',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer',
+                                                    fontSize: '13px',
+                                                    fontWeight: '600'
+                                                }}
+                                            >
+                                                + Add Development
+                                            </button>
+                                        </div>
+
+                                        {/* Opportunities */}
+                                        <div style={{ marginBottom: '24px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                                                Opportunities & Positioning
+                                            </label>
+                                            {editableContent.opportunities.map((item, idx) => (
+                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>💡</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <textarea
+                                                            value={item}
+                                                            onChange={(e) => updateEditableListItem('opportunities', idx, e.target.value)}
+                                                            style={{
+                                                                width: '100%',
+                                                                padding: '10px',
+                                                                border: '1px solid #fcd34d',
+                                                                borderRadius: '6px',
+                                                                fontSize: '13px',
+                                                                boxSizing: 'border-box',
+                                                                fontFamily: 'inherit'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={() => removeListItem('opportunities', idx)}
+                                                        style={{
+                                                            padding: '8px 12px',
+                                                            background: '#fee2e2',
+                                                            color: '#991b1b',
+                                                            border: '1px solid #fca5a5',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '12px',
+                                                            fontWeight: '600'
+                                                        }}
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button
+                                                onClick={() => addListItem('opportunities')}
+                                                style={{
+                                                    padding: '8px 12px',
+                                                    background: '#dbeafe',
+                                                    color: '#1e40af',
+                                                    border: 'none',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer',
+                                                    fontSize: '13px',
+                                                    fontWeight: '600'
+                                                }}
+                                            >
+                                                + Add Opportunity
+                                            </button>
+                                        </div>
+
+                                        {/* Watchouts */}
+                                        <div style={{ marginBottom: '24px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                                                Watch-outs
+                                            </label>
+                                            {editableContent.watchouts.map((item, idx) => (
+                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>⚠️</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <textarea
+                                                            value={item}
+                                                            onChange={(e) => updateEditableListItem('watchouts', idx, e.target.value)}
+                                                            style={{
+                                                                width: '100%',
+                                                                padding: '10px',
+                                                                border: '1px solid #fcd34d',
+                                                                borderRadius: '6px',
+                                                                fontSize: '13px',
+                                                                boxSizing: 'border-box',
+                                                                fontFamily: 'inherit'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={() => removeListItem('watchouts', idx)}
+                                                        style={{
+                                                            padding: '8px 12px',
+                                                            background: '#fee2e2',
+                                                            color: '#991b1b',
+                                                            border: '1px solid #fca5a5',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '12px',
+                                                            fontWeight: '600'
+                                                        }}
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button
+                                                onClick={() => addListItem('watchouts')}
+                                                style={{
+                                                    padding: '8px 12px',
+                                                    background: '#dbeafe',
+                                                    color: '#1e40af',
+                                                    border: 'none',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer',
+                                                    fontSize: '13px',
+                                                    fontWeight: '600'
+                                                }}
+                                            >
+                                                + Add Watch-out
+                                            </button>
+                                        </div>
+
+                                        {/* Recommended Actions */}
+                                        <div style={{ marginBottom: '24px' }}>
+                                            <label style={{ display: 'block', fontSize: '14px', fontWeight: '600', color: '#374151', marginBottom: '8px' }}>
+                                                Recommended Actions (Next 7 Days)
+                                            </label>
+                                            {editableContent.recommendedActions.map((item, idx) => (
+                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>✅</span>
+                                                    <div style={{ flex: 1 }}>
+                                                        <textarea
+                                                            value={item}
+                                                            onChange={(e) => updateEditableListItem('recommendedActions', idx, e.target.value)}
+                                                            style={{
+                                                                width: '100%',
+                                                                padding: '10px',
+                                                                border: '1px solid #fcd34d',
+                                                                borderRadius: '6px',
+                                                                fontSize: '13px',
+                                                                boxSizing: 'border-box',
+                                                                fontFamily: 'inherit'
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        onClick={() => removeListItem('recommendedActions', idx)}
+                                                        style={{
+                                                            padding: '8px 12px',
+                                                            background: '#fee2e2',
+                                                            color: '#991b1b',
+                                                            border: '1px solid #fca5a5',
+                                                            borderRadius: '4px',
+                                                            cursor: 'pointer',
+                                                            fontSize: '12px',
+                                                            fontWeight: '600'
+                                                        }}
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            ))}
+                                            <button
+                                                onClick={() => addListItem('recommendedActions')}
+                                                style={{
+                                                    padding: '8px 12px',
+                                                    background: '#dbeafe',
+                                                    color: '#1e40af',
+                                                    border: 'none',
+                                                    borderRadius: '4px',
+                                                    cursor: 'pointer',
+                                                    fontSize: '13px',
+                                                    fontWeight: '600'
+                                                }}
+                                            >
+                                                + Add Action
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Preview Display */}
+                                {!isEditing && (
+                                    <div style={{ 
+                                        background: 'white',
+                                        padding: '24px',
+                                        borderRadius: '8px',
+                                        border: '1px solid #e2e8f0',
+                                        marginBottom: '20px'
+                                    }}>
+                                        <h3 style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937', margin: '0 0 16px 0' }}>
+                                            📋 Your Insights
+                                        </h3>
+
+                                        {/* Executive Summary */}
+                                        <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e5e7eb' }}>
+                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>Executive Summary</h4>
+                                            <p style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0 }}>
+                                                {editableContent.executiveSummary || '(No summary yet)'}
+                                            </p>
+                                        </div>
+
+                                        {/* Key Developments */}
+                                        <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e5e7eb' }}>
+                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>📌 Key Developments</h4>
+                                            <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
+                                                {editableContent.keyDevelopments.map((item, idx) => (
+                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+
+                                        {/* Opportunities */}
+                                        <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e5e7eb' }}>
+                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>💡 Opportunities & Positioning</h4>
+                                            <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
+                                                {editableContent.opportunities.map((item, idx) => (
+                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+
+                                        {/* Watchouts */}
+                                        <div style={{ marginBottom: '20px', paddingBottom: '20px', borderBottom: '1px solid #e5e7eb' }}>
+                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>⚠️ Watch-outs</h4>
+                                            <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
+                                                {editableContent.watchouts.map((item, idx) => (
+                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+
+                                        {/* Recommended Actions */}
+                                        <div>
+                                            <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>✅ Recommended Actions (Next 7 Days)</h4>
+                                            <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
+                                                {editableContent.recommendedActions.map((item, idx) => (
+                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    </div>
+                                )}
 
                                 <div style={{ textAlign: 'center' }}>
                                     <button
                                         type="button"
                                         onClick={handleSendNow}
-                                        disabled={sendNowLoading}
+                                        disabled={sendNowLoading || isEditing}
                                         style={{
                                             padding: '14px 28px',
-                                            background: sendNowLoading ? '#9ca3af' : '#059669',
+                                            background: (sendNowLoading || isEditing) ? '#9ca3af' : '#059669',
                                             color: 'white',
                                             border: 'none',
                                             borderRadius: '8px',
-                                            cursor: sendNowLoading ? 'not-allowed' : 'pointer',
+                                            cursor: (sendNowLoading || isEditing) ? 'not-allowed' : 'pointer',
                                             fontSize: '16px',
                                             fontWeight: '700',
                                             transition: 'all 0.2s',
