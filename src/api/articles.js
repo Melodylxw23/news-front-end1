@@ -162,6 +162,64 @@ export async function generateHeroImage(id, body = {}) {
   }
 }
 
+// POST /api/publish/{id}/upload-hero - upload custom hero image (jpg/png up to 10MB)
+export async function uploadHeroImage(id, file) {
+  if (!id) throw new Error('id required')
+  if (!file) throw new Error('file required')
+  const token = localStorage.getItem('token')
+  const headers = token ? { Authorization: `Bearer ${token}` } : {}
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const res = await fetch(join(`/api/publish/${id}/upload-hero`), {
+    method: 'POST',
+    headers,
+    body: formData
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`)
+  try { return JSON.parse(text) } catch (e) { return text }
+}
+
+// POST /api/publish/quick-publish
+export async function quickPublishArticles(articleIds = []) {
+  if (!Array.isArray(articleIds) || articleIds.length === 0) throw new Error('articleIds required')
+  const res = await fetch(join(`/api/publish/quick-publish`), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ articleIds })
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`)
+  try { return JSON.parse(text) } catch (e) { return text }
+}
+
+// POST /api/publish/quick-schedule
+export async function quickScheduleArticles(articleIds = [], scheduledAt = null) {
+  if (!Array.isArray(articleIds) || articleIds.length === 0) throw new Error('articleIds required')
+  if (!scheduledAt) throw new Error('scheduledAt required')
+  const res = await fetch(join(`/api/publish/quick-schedule`), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify({ articleIds, scheduledAt })
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`)
+  try { return JSON.parse(text) } catch (e) { return text }
+}
+
+// POST /api/publish/analytics/tags
+export async function generatePublishTagAnalytics(body = {}) {
+  const res = await fetch(join(`/api/publish/analytics/tags`), {
+    method: 'POST',
+    headers: buildHeaders(),
+    body: JSON.stringify(body ?? {})
+  })
+  const text = await res.text()
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}: ${text}`)
+  try { return JSON.parse(text) } catch (e) { return text }
+}
+
 // POST /api/publish/{id}/publish - single publish/unpublish action
 export async function publishAction(id, actionBody = {}) {
   if (!id) throw new Error('id required')
@@ -182,4 +240,23 @@ export async function publishAction(id, actionBody = {}) {
   return parsedBody !== null ? parsedBody : text
 }
 
-export default { listArticles, getArticle, translatePreview, translateAndSave, approveTranslation, searchArticles, stats, deleteArticle, publishArticles, batchPublish, batchSaveDrafts, batchUnpublish, getPublishDraft }
+export default {
+  listArticles,
+  getArticle,
+  translatePreview,
+  translateAndSave,
+  approveTranslation,
+  searchArticles,
+  stats,
+  deleteArticle,
+  publishArticles,
+  batchPublish,
+  batchSaveDrafts,
+  batchUnpublish,
+  getPublishDraft,
+  generateHeroImage,
+  uploadHeroImage,
+  quickPublishArticles,
+  quickScheduleArticles,
+  generatePublishTagAnalytics
+}

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { getPublishDraft, batchPublish, getArticle, patchPublishDraft, generateHeroImage, publishAction, getIndustryTags, getInterestTags } from '../../api/articles'
+import { getPublishDraft, batchPublish, getArticle, patchPublishDraft, generateHeroImage, publishAction, getIndustryTags, getInterestTags, uploadHeroImage } from '../../api/articles'
 
 // Inject toast animation styles
 if (typeof document !== 'undefined' && !document.getElementById('publish-article-toast-animation')) {
@@ -129,10 +129,7 @@ function DraggableModal({ title, children, onClose, lang, setModalLang }) {
       if (!isResizing) return
       const newWidth = Math.max(400, e.clientX - resizeOffset.x)
       const newHeight = Math.max(300, e.clientY - resizeOffset.y)
-      setSize({
-        width: newWidth,
-        height: newHeight
-      })
+      setSize({ width: newWidth, height: newHeight })
     }
   }, [isResizing, resizeOffset])
 
@@ -336,6 +333,7 @@ export default function PublishArticle() {
   const [pendingNavigation, setPendingNavigation] = useState(null)
   const [heroUrlAtInit, setHeroUrlAtInit] = useState('')
   const initRef = useRef(false)
+  const heroFileInputRef = useRef(null)
 
   useEffect(() => { if (id) load() }, [id])
   useEffect(() => { initRef.current = false }, [id])
@@ -763,9 +761,38 @@ export default function PublishArticle() {
   const requestGenerateHeroImage = async () => {
     setLoading(true)
     try {
-      // call backend generate endpoint which may use AI service
-      // use lowercase keys and include the article id to match backend expectations
-      const payload = { newsArticleId: Number(id), promptOverride: '', style: null }
+      // Build a robust context snippet from available content sources so generation
+      // works for Drafts / Ready-to-Publish as well as Scheduled/Unpublished.
+      const fullField = getField('fullContent') || { en: '', zh: '' }
+      const titleField = getField('title') || { en: '', zh: '' }
+      const summaryField = getField('summary') || { en: '', zh: '' }
+
+      // Prefer Chinese content if present, otherwise fall back to English, title, or summary.
+      let rawContent = ''
+      if (fullField.zh && fullField.zh.trim()) rawContent = fullField.zh
+      else if (fullField.en && fullField.en.trim()) rawContent = fullField.en
+      else if (data?.draft?.FullContentZH) rawContent = String(data.draft.FullContentZH)
+      else if (data?.article?.FullContentZH) rawContent = String(data.article.FullContentZH)
+      else if (titleField.zh) rawContent = titleField.zh
+      else if (titleField.en) rawContent = titleField.en
+      else if (summaryField.zh) rawContent = summaryField.zh
+      else if (summaryField.en) rawContent = summaryField.en
+
+      const cleaned = String(rawContent || '').replace(/\s+/g, ' ').trim()
+      const contextSnippet = cleaned.slice(0, 800)
+
+      const promptBaseZh = contextSnippet
+        ? `根据以下中文内容提取核心名词和形容词对应的视觉场景，突出主体、动作、材质、光线与氛围；避免文字元素（不出现任何字母、数字、水印、标识）。内容：${contextSnippet}`
+        : ''
+      const promptBaseEn = contextSnippet && containsCJK(contextSnippet) === false
+        ? `From the following English content extract nouns and adjectives to describe a visual scene emphasizing subject, action, material, lighting, and mood. Avoid any text in the image (no letters, numbers, watermarks, or logos). Content: ${contextSnippet}`
+        : ''
+
+      const payload = {
+        newsArticleId: Number(id),
+        promptOverride: promptBaseZh || promptBaseEn || '',
+        style: null
+      }
       const res = await generateHeroImage(id, payload)
       // normalize possible response shapes: string, { url }, { data: { url } }, { Url }, or { path }
       console.debug('generateHeroImage response:', res)
@@ -807,23 +834,52 @@ export default function PublishArticle() {
           // ignore persistence errors but keep the generated hero in the client state
         }
       } else {
-        showToast('Image generation returned no URL', 'error')
+        const reason = (res && (res.reason || res.fallback)) ? ` (${res.reason || res.fallback})` : ''
+        showToast('Image generation returned no URL' + reason, 'error')
       }
     } catch (e) {
       const errMsg = (e && e.message) ? e.message : String(e)
       console.error('generateHeroImage error:', e)
       showToast('Image generation failed: ' + errMsg, 'error')
-      // fallback: save a stable placeholder hero image so consultant can proceed
-      try {
-        const placeholder = `/assets/generated/hero_placeholder.svg`
-        const dto = { NewsArticleId: Number(id), HeroImageUrl: placeholder, HeroImageSource: 'generated' }
-        await patchPublishDraft(id, dto)
-        setData(prev => ({ ...(prev || {}), draft: { ...(prev?.draft || {}), HeroImageUrl: placeholder, HeroImageSource: 'generated' } }))
-        showToast('Set placeholder hero image (generation failed)')
-      } catch (inner) {
-        console.error('fallback placeholder save failed:', inner)
-      }
     } finally { setLoading(false) }
+  }
+
+  const requestUploadHeroImage = async (event) => {
+    const file = event?.target?.files?.[0]
+    if (!file) return
+    try {
+      const isValidType = ['image/jpeg', 'image/jpg', 'image/png'].includes((file.type || '').toLowerCase())
+      if (!isValidType) {
+        showToast('Only JPG and PNG images are allowed', 'error')
+        return
+      }
+      const maxBytes = 10 * 1024 * 1024
+      if (file.size > maxBytes) {
+        showToast('Image must be 10MB or smaller', 'error')
+        return
+      }
+
+      setLoading(true)
+      const res = await uploadHeroImage(Number(id), file)
+      const uploadedUrl = res?.url ?? res?.Url ?? null
+      const source = res?.source ?? 'uploaded'
+      if (!uploadedUrl) throw new Error('Upload succeeded but no image URL was returned')
+
+      setData(prev => ({
+        ...(prev || {}),
+        draft: {
+          ...(prev?.draft || {}),
+          HeroImageUrl: uploadedUrl,
+          HeroImageSource: source
+        }
+      }))
+      showToast('Hero image uploaded')
+    } catch (e) {
+      showToast('Hero upload failed: ' + (e.message || e), 'error')
+    } finally {
+      setLoading(false)
+      try { if (heroFileInputRef.current) heroFileInputRef.current.value = '' } catch (e) { /* ignore */ }
+    }
   }
 
   const saveDraft = async () => {
@@ -1051,11 +1107,19 @@ export default function PublishArticle() {
         return
       }
 
-      // If scheduling, require a scheduled datetime
-      if (mode === 'schedule' && !scheduledAt) {
-        showToast('Please choose a date and time to schedule', 'error')
-        setLoading(false)
-        return
+      // If scheduling, require a scheduled datetime that is in the future
+      if (mode === 'schedule') {
+        if (!scheduledAt) {
+          showToast('Please choose a date and time to schedule', 'error')
+          setLoading(false)
+          return
+        }
+        const scheduledDate = new Date(scheduledAt)
+        if (scheduledDate <= new Date()) {
+          showToast('Scheduled date and time must be in the future', 'error')
+          setLoading(false)
+          return
+        }
       }
 
       // confirmations after validation
@@ -1256,7 +1320,7 @@ export default function PublishArticle() {
         // ignore refresh error
       }
       try { const target = mode === 'now' ? 'published' : 'scheduled'; localStorage.setItem(LAST_STATE_KEY, JSON.stringify({ tab: target, page: 1 })) } catch (e) {}
-      showToast('Published')
+      showToast(mode === 'schedule' ? 'Scheduled!' : 'Published!')
       setTimeout(() => navigate('/consultant/publish-queue'), 800)
     } catch (e) {
       showToast('Publish failed: ' + (e.message || e), 'error')
@@ -1626,11 +1690,35 @@ export default function PublishArticle() {
                 </div>
                 {displayedHeroUrl ? (
                   <div style={{ 
+                    position: 'relative',
                     background: 'linear-gradient(135deg, #fafbfc 0%, #f3f4f6 100%)', 
                     padding: 12, 
                     borderRadius: 10, 
                     border: '1px solid #e5e7eb'
                   }}>
+                    {((data?.draft?.HeroImageSource === 'generated') || (data?.article?.HeroImageSource === 'generated')) && displayedHeroUrl && (
+                      <button
+                        onClick={() => { try { window.open(displayedHeroUrl, '_blank') } catch (e) {} }}
+                        title="View full image"
+                        style={{
+                          position: 'absolute',
+                          top: 8,
+                          right: 8,
+                          zIndex: 3,
+                          padding: '6px 8px',
+                          border: 'none',
+                          background: 'rgba(150, 150, 150, 0.6)',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 700
+                        }}
+                        onMouseOver={e => e.currentTarget.style.background = 'rgba(150, 150, 150, 0.8)'}
+                        onMouseOut={e => e.currentTarget.style.background = 'rgba(150, 150, 150, 0.6)'}
+                      >
+                        ↗️
+                      </button>
+                    )}
                     <img 
                       key={displayedHeroUrl}
                       src={displayedHeroUrl} 
@@ -1651,6 +1739,13 @@ export default function PublishArticle() {
                       }} 
                     />
                     <div style={{ display: 'flex', gap: 8 }}>
+                      <input
+                        ref={heroFileInputRef}
+                        type="file"
+                        accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                        onChange={requestUploadHeroImage}
+                        style={{ display: 'none' }}
+                      />
                       <button 
                         style={{ 
                           flex: 1,
@@ -1672,7 +1767,7 @@ export default function PublishArticle() {
                         onClick={() => {
                           if (!loading) {
                             console.log('Regenerating hero image for article', id)
-                            generateHeroImage()
+                            requestGenerateHeroImage()
                           }
                         }} 
                         disabled={loading}
@@ -1702,6 +1797,23 @@ export default function PublishArticle() {
                             Regenerate
                           </>
                         )}
+                      </button>
+                      <button
+                        style={{
+                          padding: '8px 12px',
+                          borderRadius: 8,
+                          background: loading ? '#e5e7eb' : 'white',
+                          color: loading ? '#9ca3af' : '#0f766e',
+                          border: '1px solid ' + (loading ? '#d1d5db' : '#99f6e4'),
+                          fontSize: 12,
+                          fontWeight: 600,
+                          cursor: loading ? 'not-allowed' : 'pointer'
+                        }}
+                        disabled={loading}
+                        onClick={() => heroFileInputRef.current?.click()}
+                        title="Upload JPG/PNG (max 10MB)"
+                      >
+                        Upload
                       </button>
                       <button 
                         style={{ 
@@ -1805,6 +1917,30 @@ export default function PublishArticle() {
                           Generate Image
                         </>
                       )}
+                    </button>
+                    <input
+                      ref={heroFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,.png,.jpg,.jpeg"
+                      onChange={requestUploadHeroImage}
+                      style={{ display: 'none' }}
+                    />
+                    <button
+                      style={{
+                        padding: '8px 16px',
+                        borderRadius: 8,
+                        background: loading ? '#e5e7eb' : 'white',
+                        color: loading ? '#9ca3af' : '#0f766e',
+                        border: '1px solid ' + (loading ? '#d1d5db' : '#99f6e4'),
+                        fontSize: 12,
+                        fontWeight: 600,
+                        cursor: loading ? 'not-allowed' : 'pointer'
+                      }}
+                      onClick={() => heroFileInputRef.current?.click()}
+                      disabled={loading}
+                      title="Upload JPG/PNG (max 10MB)"
+                    >
+                      Upload Image
                     </button>
                   </div>
                 )}
@@ -2075,8 +2211,8 @@ export default function PublishArticle() {
                     e.currentTarget.style.transform = 'translateY(0)'
                   }}
                 >
-                  <span style={{ fontSize: 16 }}>💾</span> 
-                  Save as Draft
+                  <span style={{ fontSize: 16 }}>💾</span>
+                  {(sourceTab === 'drafted' || sourceTab === 'scheduled' || sourceTab === 'unpublished') ? 'Save' : 'Save as Draft'}
                 </button>
 
                 {/* Schedule */}
@@ -2094,6 +2230,7 @@ export default function PublishArticle() {
                     <input 
                       type="datetime-local" 
                       value={scheduledAt} 
+                      min={(() => { const now = new Date(); now.setSeconds(0, 0); return now.toISOString().slice(0, 16) })()} 
                       onChange={e => setScheduledAt(e.target.value)} 
                       style={{ 
                         flex: 1, 
