@@ -1,8 +1,103 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { sendBroadcast, previewTargetedMembers } from '../../api/broadcast';
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || 'https://localhost:7191';
+
+// Add CSS for rich text editor
+const rteStyleSheet = document.createElement("style");
+rteStyleSheet.textContent = `
+  .rte-body[contenteditable]:empty:before {
+    content: attr(data-placeholder);
+    color: #9ca3af;
+    pointer-events: none;
+  }
+  .rte-toolbar-btn:hover {
+    background: #e5e7eb !important;
+  }
+  .rte-toolbar-btn.active {
+    background: #dbeafe !important;
+    border-color: #93c5fd !important;
+    color: #1d4ed8 !important;
+  }
+`;
+document.head.appendChild(rteStyleSheet);
+
+// Lightweight rich text editor with Bold / Italic / Underline toolbar
+const RichTextEditor = ({ value, onChange, placeholder, minHeight = '120px', borderColor = '#e5e7eb', bgColor = 'white' }) => {
+    const editorRef = useRef(null);
+    const skipSyncRef = useRef(false);
+
+    useEffect(() => {
+        const el = editorRef.current;
+        if (!el) return;
+        if (skipSyncRef.current) { skipSyncRef.current = false; return; }
+        if (el.innerHTML !== (value || '')) {
+            el.innerHTML = value || '';
+        }
+    }, [value]);
+
+    const execFormat = (cmd) => {
+        editorRef.current?.focus();
+        document.execCommand(cmd, false, null);
+    };
+
+    const handleInput = () => {
+        const el = editorRef.current;
+        if (!el) return;
+        skipSyncRef.current = true;
+        const html = el.innerHTML;
+        const isEmpty = html === '' || html === '<br>' || html === '<br/>';
+        onChange(isEmpty ? '' : html);
+    };
+
+    const tools = [
+        { cmd: 'bold',      label: 'B', title: 'Bold',      extra: { fontWeight: '700' } },
+        { cmd: 'italic',    label: 'I', title: 'Italic',    extra: { fontStyle: 'italic' } },
+        { cmd: 'underline', label: 'U', title: 'Underline', extra: { textDecoration: 'underline' } },
+    ];
+
+    return (
+        <div style={{ border: `1px solid ${borderColor}`, borderRadius: '6px', overflow: 'hidden', background: bgColor }}>
+            <div style={{ display: 'flex', gap: '4px', padding: '6px 10px', borderBottom: `1px solid ${borderColor}`, background: '#f9fafb' }}>
+                {tools.map(({ cmd, label, title, extra }) => (
+                    <button
+                        key={cmd}
+                        type="button"
+                        title={title}
+                        className="rte-toolbar-btn"
+                        onMouseDown={(e) => { e.preventDefault(); execFormat(cmd); }}
+                        style={{
+                            width: '30px', height: '28px', border: '1px solid #d1d5db',
+                            borderRadius: '4px', background: 'white', cursor: 'pointer',
+                            fontSize: '13px', display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', color: '#374151', transition: 'background 0.15s',
+                            ...extra,
+                        }}
+                    >
+                        {label}
+                    </button>
+                ))}
+                <span style={{ marginLeft: '8px', fontSize: '11px', color: '#9ca3af', alignSelf: 'center' }}>
+                    Select text then click to format
+                </span>
+            </div>
+            <div
+                ref={editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                className="rte-body"
+                onInput={handleInput}
+                data-placeholder={placeholder}
+                style={{
+                    minHeight, padding: '10px', fontSize: '14px',
+                    fontFamily: 'inherit', outline: 'none', lineHeight: '1.6',
+                    color: '#111827', overflowY: 'auto', background: bgColor,
+                }}
+            />
+        </div>
+    );
+};
 
 // Helper function to get audience label
 const getAudienceLabel = (value) => {
@@ -314,6 +409,7 @@ const DraftsList = () => {
 
     useEffect(() => {
         fetchDrafts();
+        fetchTags();
     }, []);
 
     const fetchTags = async () => {
@@ -1116,67 +1212,35 @@ const DraftsList = () => {
                                                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
                                                     Message Body
                                                 </label>
-                                                <textarea
-                                                    name="body"
+                                                <RichTextEditor
                                                     value={editFormData.body}
-                                                    onChange={handleEditChange}
-                                                    style={{
-                                                        width: '100%',
-                                                        padding: '10px',
-                                                        border: '1px solid #e5e7eb',
-                                                        borderRadius: '6px',
-                                                        fontSize: '14px',
-                                                        minHeight: '120px',
-                                                        resize: 'vertical',
-                                                        fontFamily: 'inherit',
-                                                        boxSizing: 'border-box'
-                                                    }}
+                                                    onChange={(html) => setEditFormData(prev => ({ ...prev, body: html }))}
+                                                    placeholder="Write your message here..."
+                                                    minHeight="120px"
                                                 />
                                             </div>
 
                                             <div style={{ marginBottom: '16px' }}>
                                                 <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
-                                                    Channels (Select Multiple)
+                                                    Channel
                                                 </label>
-                                                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                                                    {['Email', 'WeChat'].map((ch) => {
-                                                        const isSelected = editFormData.channel.includes(ch);
-                                                        return (
-                                                            <label
-                                                                key={ch}
-                                                                onClick={() => {
-                                                                    const current = editFormData.channel;
-                                                                    const exists = current.includes(ch);
-                                                                    let next = exists ? current.filter((c) => c !== ch) : [...current, ch];
-                                                                    if (next.length === 0) next = ['Email'];
-                                                                    setEditFormData({ ...editFormData, channel: next });
-                                                                }}
-                                                                style={{
-                                                                    flex: '1',
-                                                                    minWidth: '160px',
-                                                                    padding: '12px',
-                                                                    border: isSelected ? '2px solid #dc2626' : '1px solid #e5e7eb',
-                                                                    borderRadius: '8px',
-                                                                    cursor: 'pointer',
-                                                                    background: isSelected ? '#fef2f2' : 'white',
-                                                                    display: 'flex',
-                                                                    alignItems: 'center',
-                                                                    gap: '8px',
-                                                                    transition: 'all 0.2s'
-                                                                }}
-                                                            >
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={isSelected}
-                                                                    readOnly
-                                                                    style={{ width: '18px', height: '18px', accentColor: '#dc2626', cursor: 'pointer' }}
-                                                                />
-                                                                <div>
-                                                                    <div style={{ fontWeight: '600', color: '#333' }}>Email</div>
-                                                                </div>
-                                                            </label>
-                                                        );
-                                                    })}
+                                                <div style={{
+                                                    padding: '12px',
+                                                    border: '2px solid #dc2626',
+                                                    borderRadius: '8px',
+                                                    background: '#fef2f2',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: '8px',
+                                                    maxWidth: '200px'
+                                                }}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={true}
+                                                        readOnly
+                                                        style={{ width: '18px', height: '18px', accentColor: '#dc2626' }}
+                                                    />
+                                                    <div style={{ fontWeight: '600', color: '#333' }}>Email</div>
                                                 </div>
                                             </div>
 

@@ -1,16 +1,106 @@
-﻿import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { getRoleFromToken } from '../../utils/auth';
 import { useNavigate } from 'react-router-dom';
 import { previewBroadcastRecipients, sendBroadcast, getBroadcastStatistics, getAudienceCounts, getAvailableTags, previewTargetedMembers, getTagStatistics } from '../../api/broadcast';
 
-// Add CSS for loading animation
+// Add CSS for loading animation and rich text editor placeholder
 const styleSheet = document.createElement("style");
 styleSheet.textContent = `
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
+  .rte-body[contenteditable]:empty:before {
+    content: attr(data-placeholder);
+    color: #9ca3af;
+    pointer-events: none;
+  }
+  .rte-toolbar-btn:hover {
+    background: #e5e7eb !important;
+  }
+  .rte-toolbar-btn.active {
+    background: #dbeafe !important;
+    border-color: #93c5fd !important;
+    color: #1d4ed8 !important;
+  }
 `;
 document.head.appendChild(styleSheet);
+
+// Lightweight rich text editor with Bold / Italic / Underline toolbar
+const RichTextEditor = ({ value, onChange, placeholder, minHeight = '200px', borderColor = '#e5e7eb', bgColor = 'white' }) => {
+    const editorRef = useRef(null);
+    const skipSyncRef = useRef(false);
+
+    // Sync external value changes (e.g. AI generation) into the editor
+    useEffect(() => {
+        const el = editorRef.current;
+        if (!el) return;
+        if (skipSyncRef.current) { skipSyncRef.current = false; return; }
+        if (el.innerHTML !== (value || '')) {
+            el.innerHTML = value || '';
+        }
+    }, [value]);
+
+    const execFormat = (cmd) => {
+        editorRef.current?.focus();
+        document.execCommand(cmd, false, null);
+    };
+
+    const handleInput = () => {
+        const el = editorRef.current;
+        if (!el) return;
+        skipSyncRef.current = true;
+        const html = el.innerHTML;
+        const isEmpty = html === '' || html === '<br>' || html === '<br/>';
+        onChange(isEmpty ? '' : html);
+    };
+
+    const tools = [
+        { cmd: 'bold',      label: 'B', title: 'Bold',      extra: { fontWeight: '700' } },
+        { cmd: 'italic',    label: 'I', title: 'Italic',    extra: { fontStyle: 'italic' } },
+        { cmd: 'underline', label: 'U', title: 'Underline', extra: { textDecoration: 'underline' } },
+    ];
+
+    return (
+        <div style={{ border: `1px solid ${borderColor}`, borderRadius: '6px', overflow: 'hidden', background: bgColor }}>
+            <div style={{ display: 'flex', gap: '4px', padding: '6px 10px', borderBottom: `1px solid ${borderColor}`, background: '#f9fafb' }}>
+                {tools.map(({ cmd, label, title, extra }) => (
+                    <button
+                        key={cmd}
+                        type="button"
+                        title={title}
+                        className="rte-toolbar-btn"
+                        onMouseDown={(e) => { e.preventDefault(); execFormat(cmd); }}
+                        style={{
+                            width: '30px', height: '28px', border: '1px solid #d1d5db',
+                            borderRadius: '4px', background: 'white', cursor: 'pointer',
+                            fontSize: '13px', display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', color: '#374151', transition: 'background 0.15s',
+                            ...extra,
+                        }}
+                    >
+                        {label}
+                    </button>
+                ))}
+                <span style={{ marginLeft: '8px', fontSize: '11px', color: '#9ca3af', alignSelf: 'center' }}>
+                    Select text then click a button to format
+                </span>
+            </div>
+            <div
+                ref={editorRef}
+                contentEditable
+                suppressContentEditableWarning
+                className="rte-body"
+                onInput={handleInput}
+                data-placeholder={placeholder}
+                style={{
+                    minHeight, padding: '12px', fontSize: '14px',
+                    fontFamily: 'inherit', outline: 'none', lineHeight: '1.6',
+                    color: '#111827', overflowY: 'auto', background: bgColor,
+                }}
+            />
+        </div>
+    );
+};
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_BASE_URL || '';
 
@@ -855,38 +945,6 @@ const BroadcastManagement = () => {
         // First, ensure we have a draft ID (save/update if needed)
         let draftId = formData.id || generatedContentId;
         
-        // If using AI-generated content, update it with current form data (including selectedArticleIds)
-        if (generatedContentId && !formData.id) {
-            try {
-                setIsSavingDraft(true);
-                const selectedAudience = formData.targetAudience?.length ? formData.targetAudience : [0];
-                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
-                const channelEnumValue = toChannelEnumValue(selectedChannels);
-                const updateData = {
-                    title: formData.title,
-                    subject: formData.subject,
-                    body: formData.body,
-                    channel: channelEnumValue,
-                    targetAudience: toAudienceEnumValue(selectedAudience),
-                    scheduledSendAt: formData.scheduledSendAt || null,
-                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
-                };
-                
-                await apiFetch(`/api/broadcast/${generatedContentId}`, {
-                    method: 'PUT',
-                    body: JSON.stringify(updateData)
-                });
-                
-                console.log('[handlePreviewRecipients] Updated AI-generated draft with selected articles');
-            } catch (error) {
-                console.error('[handlePreviewRecipients] update AI draft error:', error);
-                alert('Failed to update draft: ' + error.message);
-                return;
-            } finally {
-                setIsSavingDraft(false);
-            }
-        }
-        
         if (!draftId) {
             if (!formData.title?.trim() || !formData.subject?.trim() || !formData.body?.trim()) {
                 alert('Please fill in Title, Subject, and Message Body first.');
@@ -990,48 +1048,6 @@ const BroadcastManagement = () => {
         
         // Ensure we have a draft ID (save/update if needed)
         let draftId = formData.id || generatedContentId;
-        
-        // If using AI-generated content, update it with current form data
-        if (generatedContentId && !formData.id) {
-            try {
-                setIsSavingDraft(true);
-                const selectedChannels = formData.channel?.length ? formData.channel : ['Email'];
-                const channelEnumValue = toChannelEnumValue(selectedChannels);
-                const updateData = {
-                    title: formData.title,
-                    subject: formData.subject,
-                    body: formData.body,
-                    language: formData.language ?? 0,
-                    titleZH: formData.titleZH || null,
-                    subjectZH: formData.subjectZH || null,
-                    bodyZH: formData.bodyZH || null,
-                    channel: channelEnumValue,
-                    // New tag-based targeting
-                    selectedInterestTagIds: formData.selectedInterestTagIds || [],
-                    selectedIndustryTagIds: formData.selectedIndustryTagIds || [],
-                    // PascalCase variants for backend compatibility
-                    SelectedInterestTagIds: formData.selectedInterestTagIds || [],
-                    SelectedIndustryTagIds: formData.selectedIndustryTagIds || [],
-                    // Keep for backward compatibility
-                    targetAudience: 0,
-                    scheduledSendAt: formData.scheduledSendAt || null,
-                    selectedArticleIds: Array.isArray(formData.selectedArticleIds) ? formData.selectedArticleIds : []
-                };
-                
-                await apiFetch(`/api/broadcast/${generatedContentId}`, {
-                    method: 'PUT',
-                    body: JSON.stringify(updateData)
-                });
-                
-                console.log('[handleSendBroadcast] Updated AI-generated draft with tag-based targeting');
-            } catch (error) {
-                console.error('[handleSendBroadcast] update AI draft error:', error);
-                alert('Failed to update draft: ' + error.message);
-                return;
-            } finally {
-                setIsSavingDraft(false);
-            }
-        }
         
         if (!draftId) {
             try {
@@ -1706,23 +1722,11 @@ const BroadcastManagement = () => {
                             <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '8px', color: '#333' }}>
                                 Message Body
                             </label>
-                            <textarea
-                                name="body"
+                            <RichTextEditor
                                 value={formData.body}
-                                onChange={handleChange}
+                                onChange={(html) => setFormData(prev => ({ ...prev, body: html }))}
                                 placeholder="Write your message here..."
-                                style={{
-                                    width: '100%',
-                                    padding: '12px',
-                                    border: '1px solid #e5e7eb',
-                                    borderRadius: '6px',
-                                    fontSize: '14px',
-                                    minHeight: '200px',
-                                    resize: 'vertical',
-                                    fontFamily: 'inherit',
-                                    boxSizing: 'border-box'
-                                }}
-                                required
+                                minHeight="200px"
                             />
                         </div>
 
@@ -1871,12 +1875,13 @@ const BroadcastManagement = () => {
                                 {/* Chinese Body */}
                                 <div>
                                     <label style={{ display: 'block', fontSize: '13px', fontWeight: '500', marginBottom: '6px', color: '#555' }}>Body (中文正文)</label>
-                                    <textarea
-                                        name="bodyZH"
+                                    <RichTextEditor
                                         value={formData.bodyZH}
-                                        onChange={handleChange}
+                                        onChange={(html) => setFormData(prev => ({ ...prev, bodyZH: html }))}
                                         placeholder="请在此输入中文内容…"
-                                        style={{ width: '100%', padding: '12px', border: '1px solid #c7d2fe', borderRadius: '6px', fontSize: '14px', minHeight: '180px', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', background: '#fafbff' }}
+                                        minHeight="180px"
+                                        borderColor="#c7d2fe"
+                                        bgColor="#fafbff"
                                     />
                                 </div>
                             </div>

@@ -56,10 +56,15 @@ export default function SetInitialPassword() {
 
       alert(res?.message || 'Password changed successfully! Please login with your new password.')
       
-      // Clear token and redirect to login
+      // Redirect based on role — members go to MemberLogin, staff/consultant to StaffLogin
+      const role = localStorage.getItem('role') || ''
       localStorage.removeItem('token')
       localStorage.removeItem('role')
-      navigate('/StaffLogin')
+      if (role.toLowerCase() === 'member') {
+        navigate('/MemberLogin')
+      } else {
+        navigate('/StaffLogin')
+      }
     } catch (err) {
       setError(err.message || 'Failed to change password')
     } finally {

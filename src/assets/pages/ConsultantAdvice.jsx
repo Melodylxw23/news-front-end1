@@ -26,7 +26,8 @@ const ConsultantAdvice = () => {
     const [sendNowOk, setSendNowOk] = useState('');
     const [previewGenerated, setPreviewGenerated] = useState(false);
 
-    // Editable preview content
+    // Editable preview content - now supports source references
+    // Each item in arrays is { text: string, sourceName?: string, sourceUrl?: string, sourceDate?: string }
     const [editableContent, setEditableContent] = useState({
         executiveSummary: '',
         keyDevelopments: [],
@@ -35,6 +36,30 @@ const ConsultantAdvice = () => {
         recommendedActions: []
     });
     const [isEditing, setIsEditing] = useState(false);
+
+    // Helper to normalize insight items (handles both legacy strings and new object format)
+    const normalizeInsightItems = (items) => {
+        if (!items || !Array.isArray(items)) return [];
+        return items.map(item => {
+            if (typeof item === 'string') {
+                return { text: item, sourceName: '', sourceUrl: '', sourceDate: '' };
+            }
+            return {
+                text: item.text || item.Text || '',
+                sourceName: item.sourceName || item.SourceName || '',
+                sourceUrl: item.sourceUrl || item.SourceUrl || '',
+                sourceDate: item.sourceDate || item.SourceDate || ''
+            };
+        });
+    };
+
+    // Helper to create empty insight item
+    const createEmptyInsightItem = () => ({
+        text: '',
+        sourceName: '',
+        sourceUrl: '',
+        sourceDate: ''
+    });
     
     // Form state
     const [formData, setFormData] = useState({
@@ -135,14 +160,39 @@ const ConsultantAdvice = () => {
 
             const data = await response.json();
             
-            // Data comes as structured JSON: executiveSummary, keyDevelopments[], etc.
-            setEditableContent({
-                executiveSummary: data.executiveSummary || '',
-                keyDevelopments: data.keyDevelopments || [],
-                opportunities: data.opportunities || [],
-                watchouts: data.watchouts || [],
-                recommendedActions: data.recommendedActions || []
-            });
+            // DEBUG: Log raw API response to verify source data is coming through
+            console.log('[loadEditableContent] Raw API response keys:', Object.keys(data));
+            console.log('[loadEditableContent] keyDevelopments raw:', data.keyDevelopments);
+            console.log('[loadEditableContent] First keyDevelopment item:', data.keyDevelopments?.[0]);
+            console.log('[loadEditableContent] Has sourceName?:', data.keyDevelopments?.[0]?.sourceName);
+            
+            // Data comes as structured JSON with source references from OpenAI Structured Outputs
+            // The backend now returns keyDevelopments as array of objects with text, sourceName, sourceUrl, sourceDate
+            const normalizedData = {
+                executiveSummary: data.executiveSummary || data.ExecutiveSummary || '',
+                keyDevelopments: normalizeInsightItems(
+                    data.keyDevelopmentsWithSources || data.KeyDevelopmentsWithSources || 
+                    data.keyDevelopments || data.KeyDevelopments || []
+                ),
+                opportunities: normalizeInsightItems(
+                    data.opportunitiesWithSources || data.OpportunitiesWithSources || 
+                    data.opportunities || data.Opportunities || []
+                ),
+                watchouts: normalizeInsightItems(
+                    data.watchoutsWithSources || data.WatchoutsWithSources || 
+                    data.watchouts || data.Watchouts || []
+                ),
+                recommendedActions: normalizeInsightItems(
+                    data.recommendedActionsWithSources || data.RecommendedActionsWithSources || 
+                    data.recommendedActions || data.RecommendedActions || []
+                )
+            };
+            
+            // DEBUG: Log normalized data to see if sources are preserved
+            console.log('[loadEditableContent] Normalized keyDevelopments:', normalizedData.keyDevelopments);
+            console.log('[loadEditableContent] First normalized item:', normalizedData.keyDevelopments[0]);
+            
+            setEditableContent(normalizedData);
             
             setPreviewGenerated(true);
             setIsEditing(true); // Start in edit mode ready for user edits
@@ -161,12 +211,21 @@ const ConsultantAdvice = () => {
             setSendNowOk('');
 
             const token = localStorage.getItem('token');
+            
+            // Filter out empty items and send with source references
+            const filterNonEmpty = (items) => items.filter(item => item.text && item.text.trim());
+            
             const body = {
                 executiveSummary: editableContent.executiveSummary,
-                keyDevelopments: editableContent.keyDevelopments.filter(item => item.trim()), // Exclude empty items
-                opportunities: editableContent.opportunities.filter(item => item.trim()),
-                watchouts: editableContent.watchouts.filter(item => item.trim()),
-                recommendedActions: editableContent.recommendedActions.filter(item => item.trim()),
+                // Send both legacy format and new format with sources for backward compatibility
+                keyDevelopments: filterNonEmpty(editableContent.keyDevelopments).map(i => i.text),
+                keyDevelopmentsWithSources: filterNonEmpty(editableContent.keyDevelopments),
+                opportunities: filterNonEmpty(editableContent.opportunities).map(i => i.text),
+                opportunitiesWithSources: filterNonEmpty(editableContent.opportunities),
+                watchouts: filterNonEmpty(editableContent.watchouts).map(i => i.text),
+                watchoutsWithSources: filterNonEmpty(editableContent.watchouts),
+                recommendedActions: filterNonEmpty(editableContent.recommendedActions).map(i => i.text),
+                recommendedActionsWithSources: filterNonEmpty(editableContent.recommendedActions),
                 force: false
             };
 
@@ -217,17 +276,25 @@ const ConsultantAdvice = () => {
         setEditableContent(prev => ({ ...prev, [field]: value }));
     };
 
-    const updateEditableListItem = (field, index, value) => {
+    // Update a specific property of an insight item (text, sourceName, sourceUrl, sourceDate)
+    const updateEditableListItem = (field, index, property, value) => {
         setEditableContent(prev => ({
             ...prev,
-            [field]: prev[field].map((item, i) => i === index ? value : item)
+            [field]: prev[field].map((item, i) => 
+                i === index ? { ...item, [property]: value } : item
+            )
         }));
+    };
+
+    // Legacy support: update entire item text (for backward compatibility)
+    const updateEditableListItemText = (field, index, value) => {
+        updateEditableListItem(field, index, 'text', value);
     };
 
     const addListItem = (field) => {
         setEditableContent(prev => ({
             ...prev,
-            [field]: [...prev[field], '']
+            [field]: [...prev[field], createEmptyInsightItem()]
         }));
     };
 
@@ -914,11 +981,26 @@ const ConsultantAdvice = () => {
                                         marginBottom: '24px'
                                     }}>
                                         <h3 style={{ marginTop: 0, color: '#d97706', fontSize: '18px', fontWeight: '600' }}>
-                                            📝 Edit Insights Before Sending
+                                            📝 Review & Edit AI-Generated Insights
                                         </h3>
-                                        <p style={{ color: '#92400e', fontSize: '14px', margin: '0 0 24px 0' }}>
-                                            Customize the insights to match your needs. Changes will be sent when you click "Send Now".
+                                        <p style={{ color: '#92400e', fontSize: '14px', margin: '0 0 12px 0' }}>
+                                            These insights and their source references were automatically generated by AI. You can review and edit them before sending.
                                         </p>
+                                        <div style={{ 
+                                            background: '#ecfdf5', 
+                                            border: '1px solid #a7f3d0', 
+                                            borderRadius: '6px', 
+                                            padding: '10px 14px', 
+                                            fontSize: '13px', 
+                                            color: '#065f46',
+                                            marginBottom: '24px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                        }}>
+                                            <span>🤖</span>
+                                            <span><strong>Sources are AI-generated</strong> based on recent news. Click any source field to edit if needed.</span>
+                                        </div>
 
                                         {/* Executive Summary */}
                                         <div style={{ marginBottom: '24px' }}>
@@ -948,38 +1030,117 @@ const ConsultantAdvice = () => {
                                                 Key Developments
                                             </label>
                                             {editableContent.keyDevelopments.map((item, idx) => (
-                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
-                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>📌</span>
-                                                    <div style={{ flex: 1 }}>
-                                                        <textarea
-                                                            value={item}
-                                                            onChange={(e) => updateEditableListItem('keyDevelopments', idx, e.target.value)}
+                                                <div key={idx} style={{ marginBottom: '16px', padding: '12px', background: '#fefce8', borderRadius: '8px', border: '1px solid #fde047' }}>
+                                                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                        <span style={{ fontSize: '18px', lineHeight: '40px' }}>📌</span>
+                                                        <div style={{ flex: 1 }}>
+                                                            <textarea
+                                                                value={item.text}
+                                                                onChange={(e) => updateEditableListItem('keyDevelopments', idx, 'text', e.target.value)}
+                                                                placeholder="Enter development insight..."
+                                                                style={{
+                                                                    width: '100%',
+                                                                    padding: '10px',
+                                                                    border: '1px solid #fcd34d',
+                                                                    borderRadius: '6px',
+                                                                    fontSize: '13px',
+                                                                    boxSizing: 'border-box',
+                                                                    fontFamily: 'inherit',
+                                                                    minHeight: '60px'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <button
+                                                            onClick={() => removeListItem('keyDevelopments', idx)}
                                                             style={{
-                                                                width: '100%',
-                                                                padding: '10px',
-                                                                border: '1px solid #fcd34d',
-                                                                borderRadius: '6px',
-                                                                fontSize: '13px',
-                                                                boxSizing: 'border-box',
-                                                                fontFamily: 'inherit'
+                                                                padding: '8px 12px',
+                                                                background: '#fee2e2',
+                                                                color: '#991b1b',
+                                                                border: '1px solid #fca5a5',
+                                                                borderRadius: '4px',
+                                                                cursor: 'pointer',
+                                                                fontSize: '12px',
+                                                                fontWeight: '600'
                                                             }}
-                                                        />
+                                                        >
+                                                            ✕
+                                                        </button>
                                                     </div>
-                                                    <button
-                                                        onClick={() => removeListItem('keyDevelopments', idx)}
-                                                        style={{
-                                                            padding: '8px 12px',
-                                                            background: '#fee2e2',
-                                                            color: '#991b1b',
-                                                            border: '1px solid #fca5a5',
-                                                            borderRadius: '4px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '12px',
-                                                            fontWeight: '600'
-                                                        }}
-                                                    >
-                                                        ✕
-                                                    </button>
+                                                    {/* AI-Generated Source Reference - Shown inline */}
+                                                    {(item.sourceName || item.sourceUrl || item.sourceDate) && (
+                                                        <div style={{ marginLeft: '30px', marginTop: '8px', padding: '8px 12px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                                                            <div style={{ fontSize: '11px', color: '#166534', marginBottom: '4px', fontWeight: '600' }}>📎 AI-Generated Source:</div>
+                                                            <div style={{ fontSize: '12px', color: '#374151' }}>
+                                                                {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'View Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName || 'No source'}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#6b7280' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {/* Editable Source Fields - Collapsible */}
+                                                    <details style={{ marginLeft: '30px', marginTop: '8px' }}>
+                                                        <summary style={{ fontSize: '11px', color: '#6b7280', cursor: 'pointer', userSelect: 'none' }}>
+                                                            ✏️ Edit source reference
+                                                        </summary>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginTop: '8px' }}>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Name</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceName || ''}
+                                                                    onChange={(e) => updateEditableListItem('keyDevelopments', idx, 'sourceName', e.target.value)}
+                                                                    placeholder="e.g., Reuters"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source URL</label>
+                                                                <input
+                                                                    type="url"
+                                                                    value={item.sourceUrl || ''}
+                                                                    onChange={(e) => updateEditableListItem('keyDevelopments', idx, 'sourceUrl', e.target.value)}
+                                                                    placeholder="https://..."
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Date</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceDate || ''}
+                                                                    onChange={(e) => updateEditableListItem('keyDevelopments', idx, 'sourceDate', e.target.value)}
+                                                                    placeholder="YYYY-MM-DD"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </details>
                                                 </div>
                                             ))}
                                             <button
@@ -1005,38 +1166,117 @@ const ConsultantAdvice = () => {
                                                 Opportunities & Positioning
                                             </label>
                                             {editableContent.opportunities.map((item, idx) => (
-                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
-                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>💡</span>
-                                                    <div style={{ flex: 1 }}>
-                                                        <textarea
-                                                            value={item}
-                                                            onChange={(e) => updateEditableListItem('opportunities', idx, e.target.value)}
+                                                <div key={idx} style={{ marginBottom: '16px', padding: '12px', background: '#fefce8', borderRadius: '8px', border: '1px solid #fde047' }}>
+                                                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                        <span style={{ fontSize: '18px', lineHeight: '40px' }}>💡</span>
+                                                        <div style={{ flex: 1 }}>
+                                                            <textarea
+                                                                value={item.text}
+                                                                onChange={(e) => updateEditableListItem('opportunities', idx, 'text', e.target.value)}
+                                                                placeholder="Enter opportunity insight..."
+                                                                style={{
+                                                                    width: '100%',
+                                                                    padding: '10px',
+                                                                    border: '1px solid #fcd34d',
+                                                                    borderRadius: '6px',
+                                                                    fontSize: '13px',
+                                                                    boxSizing: 'border-box',
+                                                                    fontFamily: 'inherit',
+                                                                    minHeight: '60px'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <button
+                                                            onClick={() => removeListItem('opportunities', idx)}
                                                             style={{
-                                                                width: '100%',
-                                                                padding: '10px',
-                                                                border: '1px solid #fcd34d',
-                                                                borderRadius: '6px',
-                                                                fontSize: '13px',
-                                                                boxSizing: 'border-box',
-                                                                fontFamily: 'inherit'
+                                                                padding: '8px 12px',
+                                                                background: '#fee2e2',
+                                                                color: '#991b1b',
+                                                                border: '1px solid #fca5a5',
+                                                                borderRadius: '4px',
+                                                                cursor: 'pointer',
+                                                                fontSize: '12px',
+                                                                fontWeight: '600'
                                                             }}
-                                                        />
+                                                        >
+                                                            ✕
+                                                        </button>
                                                     </div>
-                                                    <button
-                                                        onClick={() => removeListItem('opportunities', idx)}
-                                                        style={{
-                                                            padding: '8px 12px',
-                                                            background: '#fee2e2',
-                                                            color: '#991b1b',
-                                                            border: '1px solid #fca5a5',
-                                                            borderRadius: '4px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '12px',
-                                                            fontWeight: '600'
-                                                        }}
-                                                    >
-                                                        ✕
-                                                    </button>
+                                                    {/* AI-Generated Source Reference - Shown inline */}
+                                                    {(item.sourceName || item.sourceUrl || item.sourceDate) && (
+                                                        <div style={{ marginLeft: '30px', marginTop: '8px', padding: '8px 12px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                                                            <div style={{ fontSize: '11px', color: '#166534', marginBottom: '4px', fontWeight: '600' }}>📎 AI-Generated Source:</div>
+                                                            <div style={{ fontSize: '12px', color: '#374151' }}>
+                                                                {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'View Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName || 'No source'}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#6b7280' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {/* Editable Source Fields - Collapsible */}
+                                                    <details style={{ marginLeft: '30px', marginTop: '8px' }}>
+                                                        <summary style={{ fontSize: '11px', color: '#6b7280', cursor: 'pointer', userSelect: 'none' }}>
+                                                            ✏️ Edit source reference
+                                                        </summary>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginTop: '8px' }}>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Name</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceName || ''}
+                                                                    onChange={(e) => updateEditableListItem('opportunities', idx, 'sourceName', e.target.value)}
+                                                                    placeholder="e.g., South China Morning Post"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source URL</label>
+                                                                <input
+                                                                    type="url"
+                                                                    value={item.sourceUrl || ''}
+                                                                    onChange={(e) => updateEditableListItem('opportunities', idx, 'sourceUrl', e.target.value)}
+                                                                    placeholder="https://..."
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Date</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceDate || ''}
+                                                                    onChange={(e) => updateEditableListItem('opportunities', idx, 'sourceDate', e.target.value)}
+                                                                    placeholder="YYYY-MM-DD"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </details>
                                                 </div>
                                             ))}
                                             <button
@@ -1062,38 +1302,117 @@ const ConsultantAdvice = () => {
                                                 Watch-outs
                                             </label>
                                             {editableContent.watchouts.map((item, idx) => (
-                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
-                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>⚠️</span>
-                                                    <div style={{ flex: 1 }}>
-                                                        <textarea
-                                                            value={item}
-                                                            onChange={(e) => updateEditableListItem('watchouts', idx, e.target.value)}
+                                                <div key={idx} style={{ marginBottom: '16px', padding: '12px', background: '#fefce8', borderRadius: '8px', border: '1px solid #fde047' }}>
+                                                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                        <span style={{ fontSize: '18px', lineHeight: '40px' }}>⚠️</span>
+                                                        <div style={{ flex: 1 }}>
+                                                            <textarea
+                                                                value={item.text}
+                                                                onChange={(e) => updateEditableListItem('watchouts', idx, 'text', e.target.value)}
+                                                                placeholder="Enter watch-out insight..."
+                                                                style={{
+                                                                    width: '100%',
+                                                                    padding: '10px',
+                                                                    border: '1px solid #fcd34d',
+                                                                    borderRadius: '6px',
+                                                                    fontSize: '13px',
+                                                                    boxSizing: 'border-box',
+                                                                    fontFamily: 'inherit',
+                                                                    minHeight: '60px'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <button
+                                                            onClick={() => removeListItem('watchouts', idx)}
                                                             style={{
-                                                                width: '100%',
-                                                                padding: '10px',
-                                                                border: '1px solid #fcd34d',
-                                                                borderRadius: '6px',
-                                                                fontSize: '13px',
-                                                                boxSizing: 'border-box',
-                                                                fontFamily: 'inherit'
+                                                                padding: '8px 12px',
+                                                                background: '#fee2e2',
+                                                                color: '#991b1b',
+                                                                border: '1px solid #fca5a5',
+                                                                borderRadius: '4px',
+                                                                cursor: 'pointer',
+                                                                fontSize: '12px',
+                                                                fontWeight: '600'
                                                             }}
-                                                        />
+                                                        >
+                                                            ✕
+                                                        </button>
                                                     </div>
-                                                    <button
-                                                        onClick={() => removeListItem('watchouts', idx)}
-                                                        style={{
-                                                            padding: '8px 12px',
-                                                            background: '#fee2e2',
-                                                            color: '#991b1b',
-                                                            border: '1px solid #fca5a5',
-                                                            borderRadius: '4px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '12px',
-                                                            fontWeight: '600'
-                                                        }}
-                                                    >
-                                                        ✕
-                                                    </button>
+                                                    {/* AI-Generated Source Reference - Shown inline */}
+                                                    {(item.sourceName || item.sourceUrl || item.sourceDate) && (
+                                                        <div style={{ marginLeft: '30px', marginTop: '8px', padding: '8px 12px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                                                            <div style={{ fontSize: '11px', color: '#166534', marginBottom: '4px', fontWeight: '600' }}>📎 AI-Generated Source:</div>
+                                                            <div style={{ fontSize: '12px', color: '#374151' }}>
+                                                                {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'View Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName || 'No source'}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#6b7280' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {/* Editable Source Fields - Collapsible */}
+                                                    <details style={{ marginLeft: '30px', marginTop: '8px' }}>
+                                                        <summary style={{ fontSize: '11px', color: '#6b7280', cursor: 'pointer', userSelect: 'none' }}>
+                                                            ✏️ Edit source reference
+                                                        </summary>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginTop: '8px' }}>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Name</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceName || ''}
+                                                                    onChange={(e) => updateEditableListItem('watchouts', idx, 'sourceName', e.target.value)}
+                                                                    placeholder="e.g., Government Report"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source URL</label>
+                                                                <input
+                                                                    type="url"
+                                                                    value={item.sourceUrl || ''}
+                                                                    onChange={(e) => updateEditableListItem('watchouts', idx, 'sourceUrl', e.target.value)}
+                                                                    placeholder="https://..."
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Date</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceDate || ''}
+                                                                    onChange={(e) => updateEditableListItem('watchouts', idx, 'sourceDate', e.target.value)}
+                                                                    placeholder="YYYY-MM-DD"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </details>
                                                 </div>
                                             ))}
                                             <button
@@ -1119,38 +1438,117 @@ const ConsultantAdvice = () => {
                                                 Recommended Actions (Next 7 Days)
                                             </label>
                                             {editableContent.recommendedActions.map((item, idx) => (
-                                                <div key={idx} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
-                                                    <span style={{ fontSize: '18px', lineHeight: '40px' }}>✅</span>
-                                                    <div style={{ flex: 1 }}>
-                                                        <textarea
-                                                            value={item}
-                                                            onChange={(e) => updateEditableListItem('recommendedActions', idx, e.target.value)}
+                                                <div key={idx} style={{ marginBottom: '16px', padding: '12px', background: '#fefce8', borderRadius: '8px', border: '1px solid #fde047' }}>
+                                                    <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'start' }}>
+                                                        <span style={{ fontSize: '18px', lineHeight: '40px' }}>✅</span>
+                                                        <div style={{ flex: 1 }}>
+                                                            <textarea
+                                                                value={item.text}
+                                                                onChange={(e) => updateEditableListItem('recommendedActions', idx, 'text', e.target.value)}
+                                                                placeholder="Enter recommended action..."
+                                                                style={{
+                                                                    width: '100%',
+                                                                    padding: '10px',
+                                                                    border: '1px solid #fcd34d',
+                                                                    borderRadius: '6px',
+                                                                    fontSize: '13px',
+                                                                    boxSizing: 'border-box',
+                                                                    fontFamily: 'inherit',
+                                                                    minHeight: '60px'
+                                                                }}
+                                                            />
+                                                        </div>
+                                                        <button
+                                                            onClick={() => removeListItem('recommendedActions', idx)}
                                                             style={{
-                                                                width: '100%',
-                                                                padding: '10px',
-                                                                border: '1px solid #fcd34d',
-                                                                borderRadius: '6px',
-                                                                fontSize: '13px',
-                                                                boxSizing: 'border-box',
-                                                                fontFamily: 'inherit'
+                                                                padding: '8px 12px',
+                                                                background: '#fee2e2',
+                                                                color: '#991b1b',
+                                                                border: '1px solid #fca5a5',
+                                                                borderRadius: '4px',
+                                                                cursor: 'pointer',
+                                                                fontSize: '12px',
+                                                                fontWeight: '600'
                                                             }}
-                                                        />
+                                                        >
+                                                            ✕
+                                                        </button>
                                                     </div>
-                                                    <button
-                                                        onClick={() => removeListItem('recommendedActions', idx)}
-                                                        style={{
-                                                            padding: '8px 12px',
-                                                            background: '#fee2e2',
-                                                            color: '#991b1b',
-                                                            border: '1px solid #fca5a5',
-                                                            borderRadius: '4px',
-                                                            cursor: 'pointer',
-                                                            fontSize: '12px',
-                                                            fontWeight: '600'
-                                                        }}
-                                                    >
-                                                        ✕
-                                                    </button>
+                                                    {/* AI-Generated Source Reference - Shown inline */}
+                                                    {(item.sourceName || item.sourceUrl || item.sourceDate) && (
+                                                        <div style={{ marginLeft: '30px', marginTop: '8px', padding: '8px 12px', background: '#f0fdf4', borderRadius: '6px', border: '1px solid #bbf7d0' }}>
+                                                            <div style={{ fontSize: '11px', color: '#166534', marginBottom: '4px', fontWeight: '600' }}>📎 AI-Generated Source:</div>
+                                                            <div style={{ fontSize: '12px', color: '#374151' }}>
+                                                                {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'View Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName || 'No source'}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#6b7280' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {/* Editable Source Fields - Collapsible */}
+                                                    <details style={{ marginLeft: '30px', marginTop: '8px' }}>
+                                                        <summary style={{ fontSize: '11px', color: '#6b7280', cursor: 'pointer', userSelect: 'none' }}>
+                                                            ✏️ Edit source reference
+                                                        </summary>
+                                                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginTop: '8px' }}>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Name</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceName || ''}
+                                                                    onChange={(e) => updateEditableListItem('recommendedActions', idx, 'sourceName', e.target.value)}
+                                                                    placeholder="e.g., Industry Report"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source URL</label>
+                                                                <input
+                                                                    type="url"
+                                                                    value={item.sourceUrl || ''}
+                                                                    onChange={(e) => updateEditableListItem('recommendedActions', idx, 'sourceUrl', e.target.value)}
+                                                                    placeholder="https://..."
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>Source Date</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={item.sourceDate || ''}
+                                                                    onChange={(e) => updateEditableListItem('recommendedActions', idx, 'sourceDate', e.target.value)}
+                                                                    placeholder="YYYY-MM-DD"
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        padding: '6px 8px',
+                                                                        border: '1px solid #d1d5db',
+                                                                        borderRadius: '4px',
+                                                                        fontSize: '12px',
+                                                                        boxSizing: 'border-box'
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </details>
                                                 </div>
                                             ))}
                                             <button
@@ -1198,7 +1596,21 @@ const ConsultantAdvice = () => {
                                             <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>📌 Key Developments</h4>
                                             <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
                                                 {editableContent.keyDevelopments.map((item, idx) => (
-                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                    <li key={idx} style={{ marginBottom: '10px' }}>
+                                                        <div>{item.text}</div>
+                                                        {(item.sourceName || item.sourceUrl) && (
+                                                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                                                                📎 {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#9ca3af' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        )}
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </div>
@@ -1208,7 +1620,21 @@ const ConsultantAdvice = () => {
                                             <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>💡 Opportunities & Positioning</h4>
                                             <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
                                                 {editableContent.opportunities.map((item, idx) => (
-                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                    <li key={idx} style={{ marginBottom: '10px' }}>
+                                                        <div>{item.text}</div>
+                                                        {(item.sourceName || item.sourceUrl) && (
+                                                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                                                                📎 {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#9ca3af' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        )}
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </div>
@@ -1218,7 +1644,21 @@ const ConsultantAdvice = () => {
                                             <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>⚠️ Watch-outs</h4>
                                             <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
                                                 {editableContent.watchouts.map((item, idx) => (
-                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                    <li key={idx} style={{ marginBottom: '10px' }}>
+                                                        <div>{item.text}</div>
+                                                        {(item.sourceName || item.sourceUrl) && (
+                                                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                                                                📎 {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#9ca3af' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        )}
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </div>
@@ -1228,7 +1668,21 @@ const ConsultantAdvice = () => {
                                             <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#374151', margin: '0 0 8px 0' }}>✅ Recommended Actions (Next 7 Days)</h4>
                                             <ul style={{ color: '#4b5563', fontSize: '14px', lineHeight: '1.6', margin: 0, paddingLeft: '20px' }}>
                                                 {editableContent.recommendedActions.map((item, idx) => (
-                                                    <li key={idx} style={{ marginBottom: '6px' }}>{item}</li>
+                                                    <li key={idx} style={{ marginBottom: '10px' }}>
+                                                        <div>{item.text}</div>
+                                                        {(item.sourceName || item.sourceUrl) && (
+                                                            <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
+                                                                📎 {item.sourceUrl ? (
+                                                                    <a href={item.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+                                                                        {item.sourceName || 'Source'}
+                                                                    </a>
+                                                                ) : (
+                                                                    <span>{item.sourceName}</span>
+                                                                )}
+                                                                {item.sourceDate && <span style={{ marginLeft: '8px', color: '#9ca3af' }}>({item.sourceDate})</span>}
+                                                            </div>
+                                                        )}
+                                                    </li>
                                                 ))}
                                             </ul>
                                         </div>
